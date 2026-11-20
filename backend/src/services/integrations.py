@@ -62,7 +62,7 @@ class IntegrationService:
             ai_has_key=bool(saved.ai_key or (saved.provider in (None, "openai") and self._settings.openai_api_key)),
             embedding_has_key=bool(saved.embedding_key or self._settings.openai_api_key), ollama_url=self._ollama_url,
             resend_sender=saved.sender if saved.sender is not None else self._settings.resend_from or "",
-            resend_recipient=saved.recipient if saved.recipient is not None else self._settings.resend_to or "",
+            resend_recipient=self._test_recipient(saved),
             resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=endpoint,
             openwa_webhook_status=local.openwa_webhook_status if webhook_configured else "not_configured",
             openwa_webhook_error=local.openwa_webhook_error if webhook_configured else None,
@@ -106,7 +106,7 @@ class IntegrationService:
         saved = await self._repository.get(shared_id)
         if not config.sender.strip() or not (config.api_key or saved.resend_key or self._settings.resend_api_key):
             raise ValueError("Informe o remetente verificado e a chave do Resend")
-        changes: dict[str, str | None] = {"sender": config.sender.strip(), "recipient": config.recipient.strip()}
+        changes: dict[str, str | None] = {"sender": config.sender.strip(), "test_recipient": config.recipient.strip()}
         if config.api_key:
             changes["resend_key"] = self._encrypt(config.api_key)
         await self._repository.save(shared_id, changes)
@@ -147,14 +147,38 @@ class IntegrationService:
     async def ai_enabled(self, tenant_id: UUID) -> bool:
         return await self.ai(tenant_id) is not None
 
-    async def resend(self, tenant_id: UUID) -> ResendClient | None:
-        saved = await self._repository.get(self._shared_tenant(tenant_id))
+    async def handoff_email(self, tenant_id: UUID) -> str:
+        local = await self._repository.get(tenant_id)
+        return self._alert_recipient(tenant_id, local)
+
+    async def save_handoff_email(self, tenant_id: UUID, email: str) -> None:
+        await self._repository.save(tenant_id, {"alert_recipient": email})
+
+    def _alert_recipient(self, tenant_id: UUID, local: StoredIntegrations) -> str:
+        if local.alert_recipient is not None:
+            return local.alert_recipient
+        if tenant_id == self._shared_tenant(tenant_id):
+            return (local.recipient if local.recipient is not None else self._settings.resend_to) or ""
+        return ""
+
+    def _test_recipient(self, saved: StoredIntegrations) -> str:
+        if saved.test_recipient is not None:
+            return saved.test_recipient
+        return (saved.recipient if saved.recipient is not None else self._settings.resend_to) or ""
+
+    async def resend(self, tenant_id: UUID, *, for_test: bool = False) -> ResendClient | None:
+        shared_id = self._shared_tenant(tenant_id)
+        saved = await self._repository.get(shared_id)
         try:
             key = self._decrypt(saved.resend_key) or self._settings.resend_api_key
         except IntegrationUnavailable:
             return None
         sender = saved.sender if saved.sender is not None else self._settings.resend_from
-        recipient = saved.recipient if saved.recipient is not None else self._settings.resend_to
+        if for_test:
+            recipient = self._test_recipient(saved)
+        else:
+            local = saved if shared_id == tenant_id else await self._repository.get(tenant_id)
+            recipient = self._alert_recipient(tenant_id, local)
         return ResendClient(key, sender, recipient or "") if key and sender else None
 
     async def openwa(self, tenant_id: UUID) -> OpenWAClient | None:

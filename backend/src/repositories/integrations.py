@@ -20,6 +20,8 @@ class StoredIntegrations(BaseModel):
     resend_key: str | None = None
     sender: str | None = None
     recipient: str | None = None
+    test_recipient: str | None = None
+    alert_recipient: str | None = None
     openwa_key: str | None = None
     openwa_url: str | None = None
     openwa_webhook_status: WebhookStatus = "pending"

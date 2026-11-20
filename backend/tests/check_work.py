@@ -89,6 +89,9 @@ async def check() -> None:
 
             with patch("src.services.openai.request_json", return_value=vector):
                 assert (await call("knowledge", "PUT", "", {"source": "Expediente", "text": "Atendemos em horário comercial."}))[0] == 200
+                status, imported = await call("knowledge", "PUT", "", {"source": "Cópia", "text": "Atendemos em horário comercial."})
+                assert status == 200 and json.loads(imported)["source"] == "Expediente"
+            assert json.loads((await call("knowledge", "GET", ""))[1]) == [{"source": "Expediente", "chunks": 1}]
             assert (await call("knowledge", "GET", "", admin_only=False))[0] == 403
             assert (await call("knowledge", "PUT", "welcome", {"message": "Bem-vindo à Nexus!"}, admin_only=False))[0] == 403
             assert (await call("knowledge", "PUT", "welcome", {"message": " Bem-vindo à Nexus! "}))[0] == 200
@@ -212,12 +215,12 @@ async def check() -> None:
             status, users = await call("operators", "GET", "")
             assert status == 200 and len(json.loads(users)) == 2
             status, settings_view = await call("integrations", "PUT", "resend", {
-                "sender": "from@example.test", "recipient": "to@example.test", "api_key": "resend-test-secret",
+                "sender": "from@example.test", "recipient": "test-recipient@example.test", "api_key": "resend-test-secret",
             })
             assert status == 200 and b"resend-test-secret" not in settings_view
             with patch("src.services.resend.request_json", return_value={"id": "resend-test-id"}) as test_email:
                 assert (await call("integrations", "POST", "resend/test"))[0] == 204
-                assert test_email.call_args.args[2]["to"] == ["to@example.test"]
+                assert test_email.call_args.args[2]["to"] == ["test-recipient@example.test"]
             rejected = HTTPError("https://api.resend.com/emails", 403, "test", hdrs=Message(), fp=None)
             with patch("src.services.resend.request_json", side_effect=rejected):
                 status, failure = await call("integrations", "POST", "resend/test")
@@ -358,6 +361,15 @@ async def check() -> None:
                     pilot_cookies.load(value.decode())
             pilot = ((b"cookie", f"nexus_atende_session={pilot_cookies['nexus_atende_session'].value}".encode()),
                      (b"x-csrf-token", pilot_cookies["nexus_atende_csrf"].value.encode()), origin_header)
+            assert (await request("GET", "handoff-email", headers=third, prefix="integrations"))[0] == 403
+            assert json.loads((await request("GET", "handoff-email", headers=pilot, prefix="integrations"))[2]) == {"email": ""}
+            assert (await request("PUT", "handoff-email", b'{"email":"support@pilot.test"}', pilot, prefix="integrations"))[0] == 200
+            assert json.loads((await call("integrations", "GET", "handoff-email"))[1]) == {"email": "to@example.test"}
+            pilot_resend = await IntegrationService(IntegrationRepository(engine), Settings()).resend(UUID(client_id))
+            assert pilot_resend is not None
+            with patch("src.services.resend.request_json", return_value={"id": "pilot-alert"}) as pilot_email:
+                await pilot_resend.send_test()
+            assert pilot_email.call_args.args[2]["to"] == ["support@pilot.test"]
             assert (await request("GET", "", headers=pilot, prefix="clients"))[0] == 403
             assert (await request("PUT", "ai", b'{"provider":"openai","model":"test"}', pilot, prefix="integrations"))[0] == 403
             assert (await request("GET", "", headers=pilot, prefix="integrations"))[0] == 403

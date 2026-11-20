@@ -41,7 +41,7 @@ class ResendClient:
 
     async def send_test(self) -> None:
         if not self._recipient:
-            raise ValueError("Salve o e-mail da equipe para receber o teste")
+            raise ValueError("Salve o destinatário do e-mail de teste")
         await self._send_checked(self._recipient, "Nexus Atende | Teste do Resend",
             "O Resend aceitou o envio de teste do Nexus Atende.", f"nexus-atende/test/{uuid4()}")
 

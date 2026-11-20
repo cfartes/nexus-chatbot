@@ -84,8 +84,8 @@ export function Integrations({ refreshConnection }: { refreshConnection: () => P
       <form id="settings-resend" className="grid gap-3" onSubmit={event => void save(event, 'resend')}>
         <label className="grid gap-1 text-sm">Chave Resend<input className={field} name="api_key" type="password" autoComplete="new-password" maxLength={1000} placeholder={config.resend_has_key ? 'Chave salva' : 'Informe a chave'} /></label>
         <label className="grid gap-1 text-sm">Remetente verificado<input className={field} name="sender" defaultValue={config.resend_sender} required maxLength={200} /></label>
-        <label className="grid gap-1 text-sm">E-mail da equipe para alertas<input className={field} name="recipient" type="email" defaultValue={config.resend_recipient} maxLength={150} /></label>
-        <p className="text-sm text-slate-600">O remetente envia convites. O e-mail da equipe recebe alertas de transbordo.</p>
+        <label className="grid gap-1 text-sm">Destinatário do e-mail de teste<input className={field} name="recipient" type="email" defaultValue={config.resend_recipient} maxLength={150} /></label>
+        <p className="text-sm text-slate-600">O remetente é compartilhado. Cada empresa define o destinatário dos avisos de atendimento humano.</p>
         <Button type="button" label="Enviar e-mail de teste" isDisabled={busy || !resendReady} onClick={async () => {
           setBusy(true); setStatus(''); setError(''); setFailed(undefined);
           try {

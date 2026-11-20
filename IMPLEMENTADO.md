@@ -80,6 +80,10 @@ Em **Configurações → Origens de contato**, cadastre o nome e o código do pr
 
 Para o acervo da Nexus, cadastre fontes distintas por serviço ou aplicativo. A importação web lê uma página por URL da origem HTTPS configurada.
 
+A base exibe a contagem das fontes e indica falhas de consulta no próprio cartão. Reimportar o mesmo conteúdo extraído atualiza a fonte existente, mesmo com outro nome.
+
+O administrador de cada empresa define o destinatário em **Avisos de atendimento humano**. A credencial e o remetente do Resend continuam compartilhados. A empresa principal conserva o destinatário anterior até salvar a própria preferência.
+
 O teste da IA distingue uma pergunta sem cobertura de uma base vazia, vetores incompatíveis e erros do provedor. Se as fontes foram importadas com outro modelo de embeddings, reimporte-as para tornar o conteúdo disponível no modelo atual.
 
 ## Executar a migração local

@@ -35,7 +35,10 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   const [connection, setConnection] = useState<Connection>();
   const [connectionError, setConnectionError] = useState('');
   const [membersFailed, setMembersFailed] = useState(false);
-  const [sourcesFailed, setSourcesFailed] = useState(false);
+  const [sourcesError, setSourcesError] = useState('');
+  const [alertEmail, setAlertEmail] = useState<string>();
+  const [savedAlertEmail, setSavedAlertEmail] = useState<string>();
+  const [alertError, setAlertError] = useState('');
   const [welcomeFailed, setWelcomeFailed] = useState(false);
   const [phone, setPhone] = useState('');
   const [qr, setQr] = useState<string | null>(null);
@@ -63,15 +66,24 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
     }
   }, []);
 
+  const loadSources = useCallback(async () => {
+    setSourcesError('');
+    try { setSources(await api<Source[]>('/knowledge')); }
+    catch (failure) { setSourcesError(errorMessage(failure)); }
+  }, []);
+
   useEffect(() => {
     void api<Member[]>('/operators').then(setMembers).catch(failure => { setMembersFailed(true); setError(errorMessage(failure)); });
-    void api<Source[]>('/knowledge').then(setSources).catch(failure => { setSourcesFailed(true); setError(errorMessage(failure)); });
+    void loadSources();
+    void api<{ email: string }>('/integrations/handoff-email').then(({ email }) => {
+      setAlertEmail(email); setSavedAlertEmail(email);
+    }).catch(failure => setAlertError(errorMessage(failure)));
     void api<Origin[]>('/knowledge/origins').then(setOrigins).catch(failure => { setOriginsFailed(true); setError(errorMessage(failure)); });
     void api<{ message: string }>('/knowledge/welcome').then(value => {
       setWelcome(value.message); setSavedWelcome(value.message);
     }).catch(failure => { setWelcomeFailed(true); setError(errorMessage(failure)); });
     void loadConnection();
-  }, [loadConnection]);
+  }, [loadConnection, loadSources]);
 
   useEffect(() => {
     if (!connection || !['CREATED', 'STARTING', 'INITIALIZING', 'AUTHENTICATING', 'QR_READY', 'VERIFYING_NUMBER', 'RATE_LIMITED'].includes(connection.status)) return;
@@ -105,16 +117,19 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
     const source = String(data.get('source'));
     void run(async () => {
       const document = data.get('file');
+      let saved: Source;
       if (importKind === 'arquivo' && document instanceof File) {
         const kind = document.name.split('.').at(-1)?.toLowerCase();
         if (!kind || !['txt', 'pdf', 'docx'].includes(kind)) throw new ApiError(422, 'Selecione um arquivo TXT, PDF ou DOCX.');
-        await api(`/knowledge/file?${new URLSearchParams({ kind, source })}`, { method: 'PUT', body: document });
+        saved = await api<Source>(`/knowledge/file?${new URLSearchParams({ kind, source })}`, { method: 'PUT', body: document });
       } else if (importKind === 'url') {
-        await api('/knowledge/url', { method: 'PUT', body: JSON.stringify({ source, url: data.get('url') }) });
+        saved = await api<Source>('/knowledge/url', { method: 'PUT', body: JSON.stringify({ source, url: data.get('url') }) });
       } else {
-        await api('/knowledge', { method: 'PUT', body: JSON.stringify({ source, text: data.get('text') }) });
+        saved = await api<Source>('/knowledge', { method: 'PUT', body: JSON.stringify({ source, text: data.get('text') }) });
       }
-      setSources(await api<Source[]>('/knowledge')); setSourcesFailed(false); form.reset();
+      setSources(current => [...(current ?? []).filter(item => item.source !== saved.source), saved]
+        .sort((first, second) => first.source.localeCompare(second.source, 'pt-BR')));
+      form.reset();
     }, 'Fonte salva.');
   }
 
@@ -189,8 +204,12 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
           <label className="grid gap-1 text-sm">E-mail<input name="email" required type="email" maxLength={150} className={field} /></label>
         </form>
       </SettingsCard>
-      <SettingsCard title="Base de conhecimento" state={sourcesFailed ? 'warning' : !sources ? 'loading' : sources.length ? 'ready' : 'missing'} detail={sourcesFailed ? 'Falha ao consultar as fontes' : sources?.length ? 'Há fontes adicionadas' : 'Adicione a primeira fonte'} action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy} />}>
+      <SettingsCard title="Base de conhecimento" state={sourcesError ? 'warning' : !sources ? 'loading' : sources.length ? 'ready' : 'missing'} detail={sourcesError ? 'Falha ao consultar as fontes' : sources?.length ? 'Há fontes adicionadas' : 'Adicione a primeira fonte'} action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy || !sources || Boolean(sourcesError)} />}>
         <p className="text-sm text-slate-600">Adicione fontes sobre a Nexus, seus serviços, aplicativos e funcionalidades.</p>
+        {sourcesError ? <section className="grid gap-2">
+          <p role="alert" className="text-sm text-red-800">Falha ao consultar as fontes. {sourcesError}</p>
+          <Button label="Atualizar fontes" isDisabled={busy} onClick={() => void loadSources()} />
+        </section> : <p role="status" className="text-sm font-medium">{sources ? `${sources.length} ${sources.length === 1 ? 'fonte cadastrada' : 'fontes cadastradas'}` : 'Consultando fontes…'}</p>}
         <ul className="grid gap-2">{(sources ?? []).map(source => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={source.source}>
           <p className="wrap-anywhere text-sm">{source.source} · {source.chunks} trecho(s)</p>
           <Button label="Remover" isDisabled={busy} onClick={() => {
@@ -209,6 +228,22 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
           {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, PDF ou DOCX<input name="file" required type="file" accept=".txt,.pdf,.docx" className={field} /></label>}
         </form>
       </SettingsCard>
+    <SettingsCard title="Avisos de atendimento humano" state={alertError ? 'warning' : savedAlertEmail === undefined ? 'loading' : savedAlertEmail ? 'ready' : 'missing'} action={<Button type="submit" form="settings-handoff-email" label="Salvar e-mail" variant="primary" isDisabled={busy || alertEmail === undefined} />}>
+      {alertError && <p role="alert" className="text-sm text-red-800">{alertError}</p>}
+      <form id="settings-handoff-email" onSubmit={event => {
+        event.preventDefault();
+        if (alertEmail === undefined) return;
+        void run(async () => {
+          const saved = await api<{ email: string }>('/integrations/handoff-email', {
+            method: 'PUT', body: JSON.stringify({ email: alertEmail.trim() }),
+          });
+          setSavedAlertEmail(saved.email); setAlertEmail(saved.email);
+        }, 'E-mail de atendimento humano salvo.');
+      }}>
+        <TextInput label="E-mail da equipe" type="email" value={alertEmail ?? ''} onChange={value => setAlertEmail(value.slice(0, 150))}
+          isDisabled={busy || alertEmail === undefined} description="Recebe o aviso quando uma conversa entra na fila humana. Deixe vazio para desativar o e-mail." />
+      </form>
+    </SettingsCard>
     <SettingsCard title="Origens de contato" state={originsFailed ? 'warning' : !origins ? 'loading' : !origins.length ? 'missing' : originPhone ? 'ready' : 'warning'} detail={originsFailed ? 'Falha ao consultar origens' : !origins?.length ? 'Cadastre uma origem por produto' : originPhone ? 'Links de WhatsApp disponíveis' : 'Salve o telefone para gerar os links'} action={<Button type="submit" form="settings-origin" label="Salvar origem" variant="primary" isDisabled={busy || !origins || !originName.trim() || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(originSlug)} />}>
       <form id="settings-origin" className="grid gap-3" onSubmit={event => {
         event.preventDefault();

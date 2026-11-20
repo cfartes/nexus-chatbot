@@ -56,7 +56,7 @@ class KnowledgeService:
             embeddings = await client.embed_batch(chunks)
         except (OSError, ValueError):
             raise KnowledgeUnavailable from None
-        await self._repository.replace(tenant_id, source, list(zip(chunks, embeddings, strict=True)), client.embedding_space)
+        source = await self._repository.replace(tenant_id, source, list(zip(chunks, embeddings, strict=True)), client.embedding_space)
         return KnowledgeSource(source=source, chunks=len(chunks))
 
     async def sources(self, tenant_id: UUID) -> list[KnowledgeSource]:

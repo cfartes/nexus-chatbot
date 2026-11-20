@@ -44,10 +44,21 @@ class KnowledgeRepository:
             """), {"tenant_id": tenant_id})
             return str(value) if value is not None else ""
 
-    async def replace(self, tenant_id: UUID, source: str, chunks: list[tuple[str, list[float]]], embedding_space: str = "") -> None:
+    async def replace(self, tenant_id: UUID, source: str, chunks: list[tuple[str, list[float]]], embedding_space: str = "") -> str:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             await connection.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-                                     {"key": f"knowledge:{tenant_id}:{source}"})
+                                     {"key": f"knowledge:{tenant_id}"})
+            if chunks:
+                existing = await connection.scalar(text("""
+                    SELECT source FROM nexus_atende.knowledge_chunks WHERE tenant_id = :tenant_id
+                    GROUP BY source
+                    HAVING lower(source) = lower(:source)
+                        OR array_agg(content ORDER BY position) = CAST(:contents AS text[])
+                    ORDER BY (source = :source) DESC, (lower(source) = lower(:source)) DESC, source
+                    LIMIT 1
+                """), {"tenant_id": tenant_id, "source": source, "contents": [content for content, _ in chunks]})
+                if existing is not None:
+                    source = str(existing)
             await connection.execute(text("""
                 DELETE FROM nexus_atende.knowledge_chunks WHERE tenant_id = :tenant_id AND source = :source
             """), {"tenant_id": tenant_id, "source": source})
@@ -57,6 +68,7 @@ class KnowledgeRepository:
                     VALUES (:tenant_id, :source, :position, :content, CAST(CAST(:embedding AS text) AS vector), :embedding_space)
                 """), [{"tenant_id": tenant_id, "source": source, "position": position, "content": content,
                          "embedding": str(embedding), "embedding_space": embedding_space} for position, (content, embedding) in enumerate(chunks)])
+            return source
 
     async def sources(self, tenant_id: UUID) -> list[KnowledgeSource]:
         async with tenant_transaction(self._engine, tenant_id) as connection:
