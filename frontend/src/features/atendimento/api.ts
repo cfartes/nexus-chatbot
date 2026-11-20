@@ -13,12 +13,40 @@ export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
+function csrfToken(): string | undefined {
+  const prefix = 'nexus_atende_csrf=';
+  return document.cookie.split('; ').find(cookie => cookie.startsWith(prefix))?.slice(prefix.length);
+}
+
+export function upload<T>(path: string, file: File, onProgress: (percent: number | null) => void, onSent: () => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('PUT', `/api/v1${path}`);
+    request.responseType = 'json';
+    const token = csrfToken();
+    if (token) request.setRequestHeader('X-CSRF-Token', token);
+    request.upload.onprogress = event => onProgress(event.lengthComputable ? Math.round(event.loaded / event.total * 100) : null);
+    request.upload.onload = onSent;
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300 && request.response) {
+        resolve(request.response);
+        return;
+      }
+      const body: { detail?: unknown } | null = request.response;
+      const fallback = request.status === 413 ? 'O arquivo excede o limite de 4 MiB.' : `O servidor não confirmou a importação (HTTP ${request.status}).`;
+      reject(new ApiError(request.status, typeof body?.detail === 'string' ? body.detail : fallback));
+    };
+    request.onerror = () => reject(new ApiError(0, 'A conexão caiu durante a importação. Confira a lista de fontes antes de tentar novamente.'));
+    request.send(file);
+  });
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   if (typeof options.body === 'string') headers.set('Content-Type', 'application/json');
   if (options.method && options.method !== 'GET') {
-    const token = document.cookie.split('; ').find(cookie => cookie.startsWith('nexus_atende_csrf='));
-    if (token) headers.set('X-CSRF-Token', token.slice('nexus_atende_csrf='.length));
+    const token = csrfToken();
+    if (token) headers.set('X-CSRF-Token', token);
   }
   const result = await fetch(`/api/v1${path}`, { ...options, headers, cache: 'no-store' });
   if (!result.ok) {

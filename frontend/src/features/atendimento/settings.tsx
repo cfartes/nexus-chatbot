@@ -1,10 +1,11 @@
 'use client';
 
 import { Button } from '@astryxdesign/core/Button';
+import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { api, ApiError, errorMessage } from './api';
+import { api, ApiError, errorMessage, upload } from './api';
 import { Integrations } from './integrations';
 import { SettingsCard, settingsGrid } from './settings-card';
 
@@ -36,6 +37,8 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   const [connectionError, setConnectionError] = useState('');
   const [membersFailed, setMembersFailed] = useState(false);
   const [sourcesError, setSourcesError] = useState('');
+  const [importError, setImportError] = useState('');
+  const [fileProgress, setFileProgress] = useState<number | 'sending' | 'processing'>();
   const [alertEmail, setAlertEmail] = useState<string>();
   const [savedAlertEmail, setSavedAlertEmail] = useState<string>();
   const [alertError, setAlertError] = useState('');
@@ -92,10 +95,10 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
     return () => window.clearInterval(timer);
   }, [connection, loadConnection]);
 
-  async function run(action: () => Promise<void>, success: string) {
+  async function run(action: () => Promise<void>, success: string, onError = setError) {
     setBusy(true); setError(''); setStatus('');
     try { await action(); setStatus(success); }
-    catch (failure) { setError(errorMessage(failure)); }
+    catch (failure) { onError(errorMessage(failure)); }
     finally { setBusy(false); }
   }
 
@@ -112,16 +115,26 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
 
   function importSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy || !sources || sourcesError) return;
+    setImportError('');
     const form = event.currentTarget;
     const data = new FormData(form);
     const source = String(data.get('source'));
     void run(async () => {
       const document = data.get('file');
       let saved: Source;
-      if (importKind === 'arquivo' && document instanceof File) {
+      if (importKind === 'arquivo') {
+        if (!(document instanceof File) || !document.size) throw new ApiError(422, 'Selecione um arquivo com conteúdo.');
+        if (document.size > 4 * 1024 ** 2) throw new ApiError(413, 'O arquivo excede o limite de 4 MiB.');
         const kind = document.name.split('.').at(-1)?.toLowerCase();
         if (!kind || !['txt', 'pdf', 'docx'].includes(kind)) throw new ApiError(422, 'Selecione um arquivo TXT, PDF ou DOCX.');
-        saved = await api<Source>(`/knowledge/file?${new URLSearchParams({ kind, source })}`, { method: 'PUT', body: document });
+        setFileProgress(0);
+        try {
+          saved = await upload<Source>(`/knowledge/file?${new URLSearchParams({ kind, source })}`, document,
+            percent => setFileProgress(percent ?? 'sending'), () => setFileProgress('processing'));
+        } finally {
+          setFileProgress(undefined);
+        }
       } else if (importKind === 'url') {
         saved = await api<Source>('/knowledge/url', { method: 'PUT', body: JSON.stringify({ source, url: data.get('url') }) });
       } else {
@@ -130,7 +143,7 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
       setSources(current => [...(current ?? []).filter(item => item.source !== saved.source), saved]
         .sort((first, second) => first.source.localeCompare(second.source, 'pt-BR')));
       form.reset();
-    }, 'Fonte salva.');
+    }, 'Fonte salva.', setImportError);
   }
 
   const connected = connection?.status === 'READY' || connection?.status === 'CONNECTED';
@@ -206,6 +219,9 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
       </SettingsCard>
       <SettingsCard title="Base de conhecimento" state={sourcesError ? 'warning' : !sources ? 'loading' : sources.length ? 'ready' : 'missing'} detail={sourcesError ? 'Falha ao consultar as fontes' : sources?.length ? 'Há fontes adicionadas' : 'Adicione a primeira fonte'} action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy || !sources || Boolean(sourcesError)} />}>
         <p className="text-sm text-slate-600">Adicione fontes sobre a Nexus, seus serviços, aplicativos e funcionalidades.</p>
+        {fileProgress !== undefined && <ProgressBar label={fileProgress === 'processing' ? 'Processando e indexando o arquivo…' : 'Enviando arquivo…'}
+          value={typeof fileProgress === 'number' ? fileProgress : 0} isIndeterminate={typeof fileProgress !== 'number'} hasValueLabel />}
+        {importError && <p role="alert" className="text-sm text-red-800">{importError}</p>}
         {sourcesError ? <section className="grid gap-2">
           <p role="alert" className="text-sm text-red-800">Falha ao consultar as fontes. {sourcesError}</p>
           <Button label="Atualizar fontes" isDisabled={busy} onClick={() => void loadSources()} />
@@ -222,10 +238,10 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
         </li>)}</ul>
         <form id="settings-source" className="grid gap-2" onSubmit={importSource}>
           <label className="grid gap-1 text-sm">Nome da fonte<input name="source" required maxLength={200} className={field} /></label>
-          <label className="grid gap-1 text-sm">Origem<select value={importKind} onChange={event => setImportKind(event.target.value)} className={field}><option value="texto">Texto</option><option value="arquivo">Arquivo</option><option value="url">Página web</option></select></label>
+          <label className="grid gap-1 text-sm">Origem<select value={importKind} disabled={busy} onChange={event => { setImportKind(event.target.value); setImportError(''); }} className={field}><option value="texto">Texto</option><option value="arquivo">Arquivo</option><option value="url">Página web</option></select></label>
           {importKind === 'texto' && <label className="grid gap-1 text-sm">Conteúdo<textarea name="text" required maxLength={40_000} rows={4} className={field} /></label>}
           {importKind === 'url' && <label className="grid gap-1 text-sm">URL autorizada<input name="url" required type="url" maxLength={2000} className={field} /></label>}
-          {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, PDF ou DOCX<input name="file" required type="file" accept=".txt,.pdf,.docx" className={field} /></label>}
+          {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, PDF ou DOCX<input name="file" required type="file" accept=".txt,.pdf,.docx" disabled={busy} onChange={() => setImportError('')} className={field} /></label>}
         </form>
       </SettingsCard>
     <SettingsCard title="Avisos de atendimento humano" state={alertError ? 'warning' : savedAlertEmail === undefined ? 'loading' : savedAlertEmail ? 'ready' : 'missing'} action={<Button type="submit" form="settings-handoff-email" label="Salvar e-mail" variant="primary" isDisabled={busy || alertEmail === undefined} />}>

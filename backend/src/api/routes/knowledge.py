@@ -7,7 +7,7 @@ from src.schemas.auth import Operator
 from src.schemas.knowledge import ContactOrigin, KnowledgeInput, KnowledgeSource, KnowledgeURL, PreviewRequest, PreviewResult, WelcomeMessage
 from src.services.bot import BotService
 from src.services.knowledge import KnowledgeService, KnowledgeUnavailable
-from src.services.knowledge_documents import MAX_UPLOAD, DocumentFormat
+from src.services.knowledge_documents import MAX_UPLOAD, DocumentFormat, DocumentImportError
 
 router = APIRouter(prefix="/knowledge")
 
@@ -83,7 +83,9 @@ async def ingest_file(
     try:
         return await service.ingest_document(actor.tenant_id, source, kind, bytes(raw))
     except KnowledgeUnavailable:
-        raise HTTPException(503, "Serviço de vetorização indisponível") from None
+        raise HTTPException(503, "Não foi possível indexar o arquivo. Confira o provedor de IA e tente novamente.") from None
+    except DocumentImportError as error:
+        raise HTTPException(422, str(error)) from None
     except ValueError:
         raise HTTPException(422, "Arquivo inválido, sem texto ou com mais de 40.000 caracteres") from None
 

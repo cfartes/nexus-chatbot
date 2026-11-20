@@ -1,7 +1,7 @@
 from html.parser import HTMLParser
 from io import BytesIO
 from os import environ
-from subprocess import DEVNULL, PIPE, SubprocessError, run
+from subprocess import DEVNULL, PIPE, SubprocessError, TimeoutExpired, run
 from sys import executable, stdin, stdout
 from typing import Literal
 from urllib.parse import urlsplit
@@ -15,7 +15,13 @@ from src.services.provider_http import NoRedirect
 
 DocumentFormat = Literal["txt", "pdf", "docx"]
 MAX_UPLOAD = 4 * 1024**2
+MAX_DOCUMENT_TEXT = 40_000
+_PDF_TEXT_LIMIT_EXIT = 42
 _WORD = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+class DocumentImportError(ValueError):
+    pass
 
 
 def extract_document(kind: DocumentFormat, raw: bytes) -> str:
@@ -31,10 +37,17 @@ def extract_document(kind: DocumentFormat, raw: bytes) -> str:
             return "\n".join("".join(node.text or "" for node in paragraph.iter(f"{_WORD}t"))
                              for paragraph in root.iter(f"{_WORD}p"))
         result = run([executable, "-m", __name__], input=raw, stdout=PIPE, stderr=DEVNULL, timeout=10,
-                     check=True, env={key: environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in environ})
+                     env={key: environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in environ})
+        if result.returncode == _PDF_TEXT_LIMIT_EXIT:
+            raise DocumentImportError("O PDF tem mais de 40.000 caracteres de texto. Divida o arquivo em partes menores e tente novamente.")
+        result.check_returncode()
         return result.stdout.decode()
+    except DocumentImportError:
+        raise
+    except TimeoutExpired:
+        raise DocumentImportError("A leitura do PDF demorou demais. Divida o arquivo em partes menores e tente novamente.") from None
     except (BadZipFile, KeyError, ParseError, OSError, RuntimeError, SubprocessError, ValueError):
-        raise ValueError("Arquivo inválido ou sem texto extraível") from None
+        raise DocumentImportError("Não foi possível ler o arquivo. Confira se ele está íntegro e sem senha.") from None
 
 
 class _PageText(HTMLParser):
@@ -86,7 +99,7 @@ if __name__ == "__main__":
     for page in reader.pages:
         content = page.extract_text()
         size += len(content) + 1
-        if size > 40_001:
-            raise ValueError("PDF text exceeds limit")
+        if size > MAX_DOCUMENT_TEXT + 1:
+            raise SystemExit(_PDF_TEXT_LIMIT_EXIT)
         output.append(content)
     stdout.buffer.write("\n".join(output).encode())

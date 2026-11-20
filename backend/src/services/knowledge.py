@@ -3,7 +3,7 @@ from uuid import UUID
 
 from src.repositories.knowledge import KnowledgeRepository
 from src.schemas.knowledge import ContactOrigin, KnowledgeInput, KnowledgeSource, WelcomeMessage
-from src.services.knowledge_documents import DocumentFormat, extract_document, extract_url
+from src.services.knowledge_documents import DocumentFormat, DocumentImportError, MAX_DOCUMENT_TEXT, extract_document, extract_url
 from src.services.integrations import IntegrationService
 
 
@@ -33,6 +33,12 @@ class KnowledgeService:
     async def ingest_document(self, tenant_id: UUID, source: str, kind: DocumentFormat, raw: bytes) -> KnowledgeSource:
         async with self._imports:
             document = await to_thread(extract_document, kind, raw)
+            document = document.strip()
+            if not document:
+                hint = " Aplique OCR se o PDF for escaneado." if kind == "pdf" else ""
+                raise DocumentImportError(f"O arquivo não contém texto extraível.{hint}")
+            if len(document) > MAX_DOCUMENT_TEXT:
+                raise DocumentImportError("O arquivo tem mais de 40.000 caracteres de texto. Divida-o em partes menores.")
             return await self.ingest(tenant_id, KnowledgeInput(source=source, text=document))
 
     async def ingest_url(self, tenant_id: UUID, source: str, url: str) -> KnowledgeSource:

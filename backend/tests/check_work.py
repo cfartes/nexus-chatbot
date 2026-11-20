@@ -30,7 +30,7 @@ from tests.check_conversations import login
 from tests.check_webhook import OTHER, SECRET, SESSION, TENANT
 
 
-def sample_pdf() -> bytes:
+def sample_pdf(content: bytes = b"Nexus em horario comercial") -> bytes:
     writer = PdfWriter()
     page = writer.add_blank_page(100, 100)
     page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({
@@ -38,7 +38,7 @@ def sample_pdf() -> bytes:
             NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")}),
     })})
     stream = DecodedStreamObject()
-    stream.set_data(b"BT /F1 12 Tf 10 20 Td (Nexus em horario comercial) Tj ET")
+    stream.set_data(b"BT /F1 12 Tf 10 20 Td (" + content + b") Tj ET")
     page[NameObject("/Contents")] = stream
     output = BytesIO()
     writer.write(output)
@@ -212,6 +212,11 @@ async def check() -> None:
                                                     query=f"kind={kind}&source={kind}".encode())
                     assert status == 200, (kind, status, body)
                 assert (await call("knowledge", "PUT", "url", {"source": "Web", "url": "https://other.test/"}))[0] == 422
+            with patch("src.services.openai.request_json") as embeddings:
+                status, _, too_long = await request("PUT", "file", sample_pdf(b"A" * 40_001), admin,
+                                                    prefix="knowledge", query=b"kind=pdf&source=Manual")
+                assert status == 422 and "mais de 40.000 caracteres" in json.loads(too_long)["detail"]
+                embeddings.assert_not_called()
             status, users = await call("operators", "GET", "")
             assert status == 200 and len(json.loads(users)) == 2
             status, settings_view = await call("integrations", "PUT", "resend", {
