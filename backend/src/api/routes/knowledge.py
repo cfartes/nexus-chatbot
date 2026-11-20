@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from src.api.routes.auth import administrator, administrator_mutation
 from src.schemas.auth import Operator
-from src.schemas.knowledge import KnowledgeInput, KnowledgeSource, KnowledgeURL
+from src.schemas.knowledge import KnowledgeInput, KnowledgeSource, KnowledgeURL, PreviewRequest, PreviewResult, WelcomeMessage
+from src.services.bot import BotService
 from src.services.knowledge import KnowledgeService, KnowledgeUnavailable
 from src.services.knowledge_documents import MAX_UPLOAD, DocumentFormat
 
@@ -19,6 +20,27 @@ def knowledge_service(request: Request) -> KnowledgeService:
 Service = Annotated[KnowledgeService, Depends(knowledge_service)]
 Reader = Annotated[Operator, Depends(administrator)]
 Writer = Annotated[Operator, Depends(administrator_mutation)]
+
+
+@router.post("/preview")
+async def preview(content: PreviewRequest, actor: Writer, request: Request, response: Response) -> PreviewResult:
+    question = content.question.strip()
+    if not question:
+        raise HTTPException(422, "Informe uma pergunta")
+    response.headers["Cache-Control"] = "no-store"
+    service: BotService = request.app.state.bot_service
+    return await service.preview(actor.tenant_id, question)
+
+
+@router.get("/welcome")
+async def welcome(actor: Reader, service: Service, response: Response) -> WelcomeMessage:
+    response.headers["Cache-Control"] = "no-store"
+    return await service.welcome(actor.tenant_id)
+
+
+@router.put("/welcome")
+async def update_welcome(content: WelcomeMessage, actor: Writer, service: Service) -> WelcomeMessage:
+    return await service.welcome(actor.tenant_id, content)
 
 
 @router.get("")

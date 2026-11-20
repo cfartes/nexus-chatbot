@@ -26,12 +26,13 @@ class BotRepository:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             values = {"tenant_id": tenant_id, "id": work.conversation_id, "message_id": work.message_id}
             info = await connection.execute(text("""
-                SELECT messages.content, customers.name, customers.previous_summary
+                SELECT messages.content, customers.name, customers.previous_summary, tenants.welcome_message
                 FROM nexus_atende.messages AS messages
                 JOIN nexus_atende.conversations AS conversations
                     ON (conversations.tenant_id, conversations.id) = (messages.tenant_id, messages.conversation_id)
                 JOIN nexus_atende.customers AS customers
                     ON (customers.tenant_id, customers.id) = (conversations.tenant_id, conversations.customer_id)
+                JOIN nexus_atende.tenants AS tenants ON tenants.id = messages.tenant_id
                 WHERE messages.tenant_id = :tenant_id AND messages.id = :message_id
                     AND conversations.id = :id AND conversations.state = 'bot'
             """), values)
@@ -53,7 +54,7 @@ class BotRepository:
             """), values)
             entries = list(reversed(history.all()))
             recent = [entry.line for entry in entries if entry.recent]
-            return BotContext(question=row.content, name=row.name, previous_summary=row.previous_summary,
+            return BotContext(question=row.content, name=row.name, previous_summary=row.previous_summary, welcome_message=row.welcome_message,
                               recent=recent, previous=[] if recent else [entry.line for entry in entries])
 
     async def resolve(self, tenant_id: UUID, work: WorkItem, answer: str | None, fallback: str, summary: str | None) -> None:

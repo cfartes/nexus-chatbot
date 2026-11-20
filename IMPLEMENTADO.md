@@ -37,14 +37,30 @@ As rotas exigem sessão autenticada. Para assumir ou transferir, envie também a
 
 | Rota | Uso |
 | --- | --- |
-| `GET` e `POST /api/v1/operators` | Listar ou criar operadores. Para criar, envie `name`, `email` e `password`. |
-| `PUT /api/v1/operators/{id}` | Alterar `name` e `is_active`. `password` é opcional e revoga sessões anteriores quando informada. |
+| `GET` e `POST /api/v1/operators` | Listar operadores ou enviar um convite com `name` e `email`. |
+| `PUT /api/v1/operators/{id}` | Alterar `name` e `is_active` de um operador. |
+| `POST /api/v1/operators/{id}/invite` | Reenviar um convite pendente, substituindo o link anterior. |
+| `POST /api/v1/operators/accept-invite` | Definir a primeira senha com um convite válido por 24 horas, de uso único. |
 | `GET` e `PUT /api/v1/knowledge` | Listar fontes ou substituir uma fonte por `source` e `text`. |
 | `PUT /api/v1/knowledge/file?kind=pdf&source=Manual` | Envie o arquivo como corpo binário. `kind` aceita `pdf`, `docx` e `txt`. Limites de 4 MiB e 40.000 caracteres extraídos. |
 | `PUT /api/v1/knowledge/url` | Importar ou atualizar uma página com `source` e `url`. A origem vem de `NEXUS_ATENDE_KNOWLEDGE_URL_ORIGIN`. |
 | `DELETE /api/v1/knowledge?source=Manual` | Remover a fonte e seus vetores. |
+| `GET` e `PUT /api/v1/knowledge/welcome` | Consultar ou salvar a saudação da empresa com `message` de até 500 caracteres. Campo vazio desativa o texto fixo. |
+| `POST /api/v1/knowledge/preview` | Simular uma pergunta com `question`. Retorna a resposta, o encaminhamento ou a indisponibilidade, além das fontes recuperadas. Não cria mensagens ou alertas. |
 
-O cadastro e as alterações exigem administrador, origem configurada e token CSRF. Configure `NEXUS_ATENDE_OPENAI_API_KEY` para habilitar IA nas novas conversas e `NEXUS_ATENDE_OPENAI_MODEL` para escolher o modelo compatível com respostas estruturadas. A conta do piloto envia à OpenAI os trechos recuperados e o contexto necessários à resposta.
+O cadastro e as alterações administrativas exigem sessão de administrador, origem configurada e token CSRF. A aceitação do convite usa a origem configurada e o token secreto do link.
+
+## Configurar as integrações pelo painel
+
+Em **Configurações → Integrações**, selecione OpenAI, Google Gemini, Anthropic Claude ou Ollama local e informe o modelo. Para Claude, configure também uma chave OpenAI para embeddings. Para usar o Ollama, configure `NEXUS_ATENDE_OLLAMA_URL` no servidor e escolha um modelo de chat e um modelo de embeddings compatível com 768 dimensões. Reimporte as fontes quando mudar o provedor ou modelo de embeddings.
+
+Configure `NEXUS_ATENDE_CONFIG_KEY` com uma chave Fernet gerada pelo backend e preserve o mesmo valor na API e no worker. Para gerar uma, rode `uv run --locked python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` em `backend`. As chaves das integrações são criptografadas no banco. O painel informa se uma chave existe e oferece a substituição sem exibir o valor salvo.
+
+Para Resend, salve a chave, o remetente verificado e, se desejar alertas de fila, o e-mail da equipe. Convites usam o remetente verificado e o destinatário de cada operador. A opção **Reenviar convite** gera um novo link quando o anterior expira ou o envio falha.
+
+Para OpenWA, salve a chave no painel e consulte a sessão, o status e o QR Code na área WhatsApp. O endereço OpenWA, a sessão dedicada e o segredo do webhook são provisionados no servidor para limitar o acesso na VPS compartilhada. As credenciais de ambiente continuam disponíveis como configuração inicial.
+
+Em **Configurações → Boas-vindas**, o administrador define o texto que abre a primeira resposta automática e uma nova sessão após 15 minutos sem interação. A saudação também acompanha o primeiro encaminhamento automático para a fila humana. Para o acervo da Nexus, cadastre fontes distintas por serviço ou aplicativo. A importação web lê uma página por URL da origem HTTPS configurada.
 
 ## Executar a migração local
 
@@ -91,3 +107,15 @@ Para ligar os alertas no worker, configure `NEXUS_ATENDE_RESEND_API_KEY`, `NEXUS
 O piloto usa uma fila transacional no PostgreSQL para IA, WhatsApp e e-mail. Eventos do painel usam SSE e notificações do PostgreSQL. O worker é um processo separado da API.
 
 Rode `powershell -NoProfile -File backend/tests/run_local.ps1` para criar um PostgreSQL descartável e validar a API, a concorrência, o webhook, os envios, o RAG, os arquivos, o isolamento e o transbordo. Os provedores externos são simulados.
+
+## Executar o painel web
+
+O painel em `frontend` usa Next.js App Router, TypeScript, Tailwind e Astryx. Inclui login, filas de conversas, histórico, envio e status de entregas, transferência, controle da IA, QR Code, operadores e fontes do RAG.
+
+Com a API em `http://127.0.0.1:8085`, configure `NEXUS_ATENDE_PUBLIC_ORIGIN=http://127.0.0.1:3000` no backend local. Em `frontend`, execute `corepack pnpm install --frozen-lockfile` e `corepack pnpm dev --hostname 127.0.0.1`. Acesse `http://127.0.0.1:3000`. Defina `NEXUS_ATENDE_API_URL` no ambiente do Next.js para usar outro endereço de API. O navegador usa rotas de mesma origem para sessão e SSE.
+
+Para validar o painel, rode `corepack pnpm lint`, `corepack pnpm build` e `corepack pnpm exec astryx doctor --built .next` em `frontend`.
+
+Para executar o painel em modo produção local, depois de preparar o banco, configure `NEXUS_ATENDE_PUBLIC_ORIGIN=http://127.0.0.1:3001` e rode `docker compose --profile web up -d --build --wait web`. O painel ficará em `http://127.0.0.1:3001` e encaminhará `/api/v1` à API na rede interna do Compose. O perfil `app` permanece disponível para executar o worker.
+
+Na hospedagem, aponte o proxy HTTPS para o painel e configure `NEXUS_ATENDE_PUBLIC_ORIGIN` com a origem pública. Preserve o cabeçalho `Origin`, permita requisições SSE sem buffering e configure apenas proxies confiáveis em `NEXUS_ATENDE_TRUSTED_PROXY_IPS`.

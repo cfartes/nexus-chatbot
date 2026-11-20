@@ -1,7 +1,10 @@
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 
 class WhatsAppConnection(BaseModel):
+    session_id: UUID | None = None
     status: str
     phone_number: str | None = None
 

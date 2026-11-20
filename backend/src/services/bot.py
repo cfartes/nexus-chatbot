@@ -5,43 +5,61 @@ from uuid import UUID
 
 from src.repositories.bot import BotRepository
 from src.repositories.knowledge import KnowledgeRepository
-from src.schemas.knowledge import BotContext
+from src.schemas.knowledge import BotContext, PreviewResult
 from src.schemas.work import WorkItem
-from src.services.openai import OpenAIClient
+from src.services.integrations import IntegrationService
 
 FALLBACK = "Vou encaminhar sua conversa para a equipe da Nexus. Um atendente continuará o atendimento aqui."
 logger = logging.getLogger(__name__)
 
 
 class BotService:
-    def __init__(self, repository: BotRepository, knowledge: KnowledgeRepository, client: OpenAIClient | None) -> None:
+    def __init__(self, repository: BotRepository, knowledge: KnowledgeRepository, integrations: IntegrationService) -> None:
         self._repository = repository
         self._knowledge = knowledge
-        self._client = client
+        self._integrations = integrations
 
     async def process(self, tenant_id: UUID, work: WorkItem) -> None:
         context = await self._repository.context(tenant_id, work)
-        answer, summary = await self._answer(tenant_id, context) if context is not None else (None, None)
-        await self._repository.resolve(tenant_id, work, answer, FALLBACK, summary)
+        result, summary = await self._answer(tenant_id, context) if context is not None else (None, None)
+        answer = result.message if result is not None and result.status == "answered" else None
+        fallback = result.message if result is not None else FALLBACK
+        await self._repository.resolve(tenant_id, work, answer, fallback, summary)
 
-    async def _answer(self, tenant_id: UUID, context: BotContext) -> tuple[str | None, str | None]:
+    async def preview(self, tenant_id: UUID, question: str) -> PreviewResult:
+        welcome_message = await self._knowledge.welcome(tenant_id)
+        result, _ = await self._answer(tenant_id, BotContext(
+            question=question, welcome_message=welcome_message, name=None, previous_summary=None, recent=[], previous=[],
+        ))
+        if result.status == "unavailable":
+            return PreviewResult(status="unavailable", message="A IA está indisponível. Confira a configuração e tente novamente.", sources=result.sources)
+        return result
+
+    async def _answer(self, tenant_id: UUID, context: BotContext) -> tuple[PreviewResult, str | None]:
+        welcome = f"{context.welcome_message}\n\n" if not context.recent and context.welcome_message else ""
+        fallback = welcome + FALLBACK
         normalized = normalize("NFKD", context.question.casefold()).encode("ascii", "ignore").decode()
-        if self._client is None or search(r"\b(atendente|operador|atendimento humano|falar com (uma pessoa|suporte))\b", normalized):
-            return None, None
+        if search(r"\b(atendente|operador|atendimento humano|falar com (uma pessoa|suporte))\b", normalized):
+            return PreviewResult(status="handoff", message=fallback, sources=[]), None
+        client = await self._integrations.ai(tenant_id)
+        if client is None:
+            return PreviewResult(status="unavailable", message=fallback, sources=[]), None
         summary = None
         if context.previous:
             try:
-                summary = await self._client.summarize(context.previous, context.previous_summary)
+                summary = await client.summarize(context.previous, context.previous_summary)
             except (OSError, ValueError) as error:
                 logger.warning("Conversation recap unavailable (%s)", type(error).__name__)
+        sources: list[str] = []
         try:
-            knowledge = await self._knowledge.search(tenant_id, await self._client.embed(context.question[:4000]))
+            knowledge = await self._knowledge.search(tenant_id, await client.embed(context.question[:4000]), client.embedding_space)
             if not knowledge:
-                return None, summary
-            result = await self._client.answer(context, knowledge, summary or context.previous_summary)
+                return PreviewResult(status="handoff", message=fallback, sources=[]), summary
+            sources = list(dict.fromkeys(match.source for match in knowledge))
+            result = await client.answer(context, [match.content for match in knowledge], summary or context.previous_summary)
         except (OSError, ValueError):
-            return None, summary
+            return PreviewResult(status="unavailable", message=fallback, sources=sources), summary
         answer = result.answer.strip()
         if result.needs_human or not 0 < len(answer) <= 4096 or "\x00" in answer:
-            return None, summary
-        return answer, summary
+            return PreviewResult(status="handoff", message=fallback, sources=sources), summary
+        return PreviewResult(status="answered", message=(welcome + answer)[:4096], sources=sources), summary

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from uuid import uuid4
 from zipfile import ZipFile
 
+from cryptography.fernet import Fernet
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from sqlalchemy import text
@@ -47,6 +48,8 @@ def sample_docx() -> bytes:
 
 async def check() -> None:
     os.environ.update({
+        "NEXUS_ATENDE_CONFIG_KEY": Fernet.generate_key().decode(),
+        "NEXUS_ATENDE_OLLAMA_URL": "http://127.0.0.1:11434",
         "NEXUS_ATENDE_OPENWA_WEBHOOK_TENANT_ID": str(TENANT), "NEXUS_ATENDE_OPENWA_WEBHOOK_SECRET": SECRET,
         "NEXUS_ATENDE_OPENAI_API_KEY": "test-only", "NEXUS_ATENDE_RESEND_API_KEY": "test-only",
         "NEXUS_ATENDE_RESEND_FROM": "from@example.test", "NEXUS_ATENDE_RESEND_TO": "to@example.test",
@@ -79,6 +82,18 @@ async def check() -> None:
             with patch("src.services.openai.request_json", return_value=vector):
                 assert (await call("knowledge", "PUT", "", {"source": "Expediente", "text": "Atendemos em horário comercial."}))[0] == 200
             assert (await call("knowledge", "GET", "", admin_only=False))[0] == 403
+            assert (await call("knowledge", "PUT", "welcome", {"message": "Bem-vindo à Nexus!"}, admin_only=False))[0] == 403
+            assert (await call("knowledge", "PUT", "welcome", {"message": " Bem-vindo à Nexus! "}))[0] == 200
+            assert json.loads((await call("knowledge", "GET", "welcome"))[1])["message"] == "Bem-vindo à Nexus!"
+            assert (await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"}, admin_only=False))[0] == 403
+            with patch("src.services.openai.request_json", side_effect=[vector, completion]):
+                status, preview = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
+            assert status == 200 and json.loads(preview) == {
+                "status": "answered", "message": "Bem-vindo à Nexus!\n\nAtendemos em horário comercial.",
+                "sources": ["Expediente"],
+            }
+            status, preview = await call("knowledge", "POST", "preview", {"question": "Quero um atendente"})
+            assert status == 200 and json.loads(preview)["status"] == "handoff"
 
             for message_id, content in (("work-ai", "Qual é o expediente?"), ("work-human", "Quero falar com um atendente")):
                 raw = json.dumps({"event": "message.received", "sessionId": SESSION, "data": {
@@ -94,8 +109,10 @@ async def check() -> None:
                             break
                     if message_id == "work-ai":
                         assert whatsapp.call_count == 2 and ai.call_count == 2 and resend.call_count == 1
+                        assert whatsapp.call_args.args[2]["text"] == "Bem-vindo à Nexus!\n\nAtendemos em horário comercial."
                     else:
                         assert whatsapp.call_count == 1 and ai.call_count == 0 and resend.call_count == 1
+                        assert not whatsapp.call_args.args[2]["text"].startswith("Bem-vindo")
                     email_headers = resend.call_args.args[1]
                     assert email_headers["Idempotency-Key"].startswith("nexus-atende/handoff/")
                     assert "5511888888888" not in str(resend.call_args.args[2])
@@ -138,16 +155,49 @@ async def check() -> None:
                 assert (await call("knowledge", "PUT", "url", {"source": "Web", "url": "https://other.test/"}))[0] == 422
             status, users = await call("operators", "GET", "")
             assert status == 200 and len(json.loads(users)) == 2
-            status, created = await call("operators", "POST", "", {
-                "name": "Terceiro", "email": "third@example.test", "password": "test-password-123",
+            status, settings_view = await call("integrations", "PUT", "resend", {
+                "sender": "from@example.test", "recipient": "to@example.test", "api_key": "resend-test-secret",
             })
-            assert status == 201, (status, created)
+            assert status == 200 and b"resend-test-secret" not in settings_view
+            assert (await call("integrations", "GET", "", admin_only=False))[0] == 403
+            assert (await call("integrations", "PUT", "openwa", {"api_key": "openwa-test-secret"}))[0] == 200
+            async with tenant_transaction(engine, TENANT) as connection:
+                encrypted = await connection.scalar(text("SELECT config::text FROM nexus_atende.integrations"))
+                assert "resend-test-secret" not in encrypted and "openwa-test-secret" not in encrypted
+            with patch("src.services.resend.request_json", return_value={"id": "invite-email"}) as email:
+                status, created = await call("operators", "POST", "", {"name": "Terceiro", "email": "third@example.test"})
+                member = json.loads(created)
+                assert status == 201 and member["invite_sent"] and not member["is_active"], (status, created)
+                original = email.call_args.args[2]["text"].split("#")[-1]
+                assert (await call("operators", "POST", f"{member['id']}/invite"))[0] == 200
+                renewed = email.call_args.args[2]["text"].split("#")[-1]
+            assert (await call("operators", "POST", "accept-invite", {"token": original, "password": "test-password-123"}))[0] == 400
+            assert (await call("operators", "POST", "accept-invite", {"token": renewed, "password": "test-password-123"}))[0] == 204
+            assert (await call("operators", "POST", "accept-invite", {"token": renewed, "password": "test-password-123"}))[0] == 400
             _, third = await login(b"third@example.test")
             assert (await call("operators", "PUT", operator_id, {"name": "Primeiro", "is_active": False}))[0] == 200
             assert (await request("GET", "me", headers=operator))[0] == 401
             assert (await request("GET", "me", headers=third))[0] == 200
             status, waiting = await call("conversations", "GET", "")
             assert status == 200 and conversation_id in {row["id"] for row in json.loads(waiting)}
+            assert (await call("integrations", "PUT", "ai", {"provider": "ollama", "model": "test-local"}))[0] == 200
+            with patch("src.services.openai.request_json", return_value={"embeddings": [[1.0] + [0.0] * 767]}) as local:
+                status, body = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
+            assert status == 200 and json.loads(body)["status"] == "handoff"
+            assert local.call_args.args[0] == "http://127.0.0.1:11434/api/embed"
+            assert (await call("integrations", "PUT", "ai", {"provider": "gemini", "model": "test-gemini", "api_key": "test-gemini-key"}))[0] == 200
+            gemini_vector = {"embeddings": [{"values": [1.0] + [0.0] * 767}]}
+            with patch("src.services.openai.request_json", side_effect=[gemini_vector, gemini_vector, completion]) as gemini:
+                assert (await call("knowledge", "PUT", "", {"source": "Expediente", "text": "Horário comercial"}))[0] == 200
+                status, body = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
+            assert status == 200 and json.loads(body)["status"] == "answered"
+            assert gemini.call_args.args[0].endswith("/openai/chat/completions")
+            assert (await call("integrations", "PUT", "ai", {"provider": "anthropic", "model": "test-claude", "api_key": "test-claude-key"}))[0] == 200
+            claude_answer = {"content": [{"type": "text", "text": '{"needs_human":false,"answer":"Por aqui."}'}]}
+            with patch("src.services.openai.request_json", side_effect=[vector, claude_answer]) as claude:
+                status, body = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
+            assert status == 200 and json.loads(body)["status"] == "answered"
+            assert claude.call_args.args[0] == "https://api.anthropic.com/v1/messages"
     finally:
         await engine.dispose()
 

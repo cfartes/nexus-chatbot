@@ -6,6 +6,7 @@ from src.repositories.outgoing_messages import OutgoingMessageRepository
 from src.schemas.auth import Operator
 from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue, SendTextRequest
 from src.schemas.work import WorkReceipt
+from src.services.integrations import IntegrationService
 
 
 class ConversationUnavailable(Exception):
@@ -18,11 +19,11 @@ class BotUnavailable(Exception):
 
 class ConversationService:
     def __init__(self, repository: ConversationRepository, outgoing: OutgoingMessageRepository,
-                 bot: BotRepository, *, bot_enabled: bool) -> None:
+                 bot: BotRepository, integrations: IntegrationService) -> None:
         self._repository = repository
         self._outgoing = outgoing
         self._bot = bot
-        self._bot_enabled = bot_enabled
+        self._integrations = integrations
 
     async def operators(self, actor: Operator) -> list[Operator]:
         if actor.role != "admin":
@@ -38,7 +39,7 @@ class ConversationService:
         return receipt
 
     async def set_bot(self, actor: Operator, conversation_id: UUID, active: bool) -> None:
-        if active and not self._bot_enabled:
+        if active and not await self._integrations.ai_enabled(actor.tenant_id):
             raise BotUnavailable
         if not await self._bot.set_active(actor, conversation_id, active):
             raise ConversationUnavailable

@@ -10,7 +10,7 @@ SESSION_COOKIE = "nexus_atende_session"
 CSRF_COOKIE = "nexus_atende_csrf"
 
 
-def _check_origin(request: Request) -> None:
+def check_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     if not origin or origin != request.app.state.public_origin:
         raise HTTPException(403, "Origem inválida")
@@ -29,7 +29,7 @@ async def authenticated_operator(request: Request) -> Operator:
 
 
 async def mutation_operator(request: Request) -> Operator:
-    _check_origin(request)
+    check_origin(request)
     operator = await authenticated_operator(request)
     if not valid_csrf(request.cookies.get(SESSION_COOKIE, ""), request.headers.get("X-CSRF-Token", "")):
         raise HTTPException(403, "Token CSRF inválido")
@@ -48,7 +48,7 @@ async def administrator_mutation(actor: Annotated[Operator, Depends(mutation_ope
 
 @router.post("/login", response_model=Operator)
 async def login(credentials: LoginRequest, request: Request, response: Response) -> Operator:
-    _check_origin(request)
+    check_origin(request)
     try:
         operator, session = await _service(request).login(
             credentials, request.client.host if request.client else "unknown",
@@ -71,7 +71,7 @@ async def current_operator(request: Request, response: Response) -> Operator:
 
 @router.post("/logout", status_code=204)
 async def logout(request: Request, response: Response) -> None:
-    _check_origin(request)
+    check_origin(request)
     try:
         await _service(request).logout(
             request.cookies.get(SESSION_COOKIE, ""), request.headers.get("X-CSRF-Token", ""),

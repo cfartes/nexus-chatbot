@@ -2,9 +2,9 @@ from asyncio import Semaphore, to_thread
 from uuid import UUID
 
 from src.repositories.knowledge import KnowledgeRepository
-from src.schemas.knowledge import KnowledgeInput, KnowledgeSource
+from src.schemas.knowledge import KnowledgeInput, KnowledgeSource, WelcomeMessage
 from src.services.knowledge_documents import DocumentFormat, extract_document, extract_url
-from src.services.openai import OpenAIClient
+from src.services.integrations import IntegrationService
 
 
 class KnowledgeUnavailable(Exception):
@@ -12,11 +12,16 @@ class KnowledgeUnavailable(Exception):
 
 
 class KnowledgeService:
-    def __init__(self, repository: KnowledgeRepository, client: OpenAIClient | None, url_origin: str | None = None) -> None:
+    def __init__(self, repository: KnowledgeRepository, integrations: IntegrationService, url_origin: str | None = None) -> None:
         self._repository = repository
-        self._client = client
+        self._integrations = integrations
         self._url_origin = url_origin
         self._imports = Semaphore(2)
+
+    async def welcome(self, tenant_id: UUID, content: WelcomeMessage | None = None) -> WelcomeMessage:
+        return WelcomeMessage(message=await self._repository.welcome(
+            tenant_id, content.message.strip() if content is not None else None,
+        ))
 
     async def ingest_document(self, tenant_id: UUID, source: str, kind: DocumentFormat, raw: bytes) -> KnowledgeSource:
         async with self._imports:
@@ -32,7 +37,8 @@ class KnowledgeService:
             return await self.ingest(tenant_id, KnowledgeInput(source=source, text=document))
 
     async def ingest(self, tenant_id: UUID, content: KnowledgeInput) -> KnowledgeSource:
-        if self._client is None:
+        client = await self._integrations.ai(tenant_id)
+        if client is None:
             raise KnowledgeUnavailable
         source, document = content.source.strip(), content.text.strip()
         if not source or not document:
@@ -40,10 +46,10 @@ class KnowledgeService:
         # shortcut: split by characters for the pilot, use token-aware chunks for larger imports.
         chunks = [document[start:start + 1800] for start in range(0, max(1, len(document) - 200), 1600)]
         try:
-            embeddings = await self._client.embed_batch(chunks)
+            embeddings = await client.embed_batch(chunks)
         except (OSError, ValueError):
             raise KnowledgeUnavailable from None
-        await self._repository.replace(tenant_id, source, list(zip(chunks, embeddings, strict=True)))
+        await self._repository.replace(tenant_id, source, list(zip(chunks, embeddings, strict=True)), client.embedding_space)
         return KnowledgeSource(source=source, chunks=len(chunks))
 
     async def sources(self, tenant_id: UUID) -> list[KnowledgeSource]:

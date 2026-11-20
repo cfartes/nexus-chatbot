@@ -7,6 +7,7 @@ from pydantic import SecretStr, ValidationError
 
 from src.repositories.incoming_messages import IncomingMessageRepository
 from src.schemas.openwa_events import IncomingText, OpenWAEvent, OpenWAReceivedEvent
+from src.services.integrations import IntegrationService
 
 
 class InvalidSignature(Exception):
@@ -18,11 +19,11 @@ class InvalidEvent(Exception):
 
 
 class OpenWAWebhook:
-    def __init__(self, messages: IncomingMessageRepository, tenant_id: UUID, secret: SecretStr, *, bot_enabled: bool = False) -> None:
+    def __init__(self, messages: IncomingMessageRepository, tenant_id: UUID, secret: SecretStr, integrations: IntegrationService) -> None:
         self._messages = messages
         self._tenant_id = tenant_id
         self._secret = secret.get_secret_value().encode()
-        self._bot_enabled = bot_enabled
+        self._integrations = integrations
 
     async def receive(self, tenant_id: UUID, signature: str, raw: bytes) -> None:
         if tenant_id != self._tenant_id or len(signature) != 71 or not signature.isascii():
@@ -47,4 +48,4 @@ class OpenWAWebhook:
         await self._messages.save(tenant_id, IncomingText(
             session_id=event.session_id, message_id=event.data.id, chat_id=chat_id, content=content,
             display_name=event.data.display_name.strip() or None if event.data.display_name else None,
-        ), bot_enabled=self._bot_enabled)
+        ), bot_enabled=await self._integrations.ai_enabled(tenant_id))
