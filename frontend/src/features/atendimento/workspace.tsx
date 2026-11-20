@@ -2,7 +2,9 @@
 
 import { Button } from '@astryxdesign/core/Button';
 import { VStack } from '@astryxdesign/core/Layout';
+import Image from 'next/image';
 import { useEffect, useState, type FormEvent } from 'react';
+import logo from '../../assets/nexus-atende.webp';
 import { api, ApiError, errorMessage, type Conversation, type Operator, type Queue } from './api';
 import { Thread } from './thread';
 import { Settings } from './settings';
@@ -32,7 +34,7 @@ function Login({ onLogin }: { onLogin: (operator: Operator) => void }) {
   }
   return <main className="grid min-h-dvh place-items-center bg-slate-100 p-6 text-slate-900">
     <form onSubmit={submit} className="grid w-full max-w-md gap-5 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-      <header><h1 className="text-3xl font-semibold">Nexus Atende</h1><p className="mt-2 text-slate-600">Acesse o painel de atendimento.</p></header>
+      <header><h1><Image src={logo} alt="Nexus Atende" className="h-auto w-64 max-w-full rounded-lg" unoptimized /></h1><p className="mt-3 text-slate-600">Acesse o painel de atendimento.</p></header>
       <label className="grid gap-2 text-sm font-medium">ID da empresa<input required name="tenant_id" value={company} onChange={event => setCompany(event.target.value)} className={fieldStyle} placeholder="UUID da empresa" /></label>
       <label className="grid gap-2 text-sm font-medium">E-mail<input required type="email" name="email" autoComplete="username" className={fieldStyle} /></label>
       <label className="grid gap-2 text-sm font-medium">Senha<input required type="password" name="password" autoComplete="current-password" className={fieldStyle} /></label>
@@ -98,7 +100,7 @@ export function Workspace() {
   const active = rows.find(row => row.id === selected);
   return <main className="min-h-dvh bg-slate-100 text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 px-5 py-4 text-white">
-      <h1 className="text-xl font-semibold">Nexus <strong className="text-teal-300">Atende</strong></h1>
+      <h1><Image src={logo} alt="Nexus Atende" className="h-auto w-32 rounded-md" unoptimized /></h1>
       <nav aria-label="Área de trabalho" className="flex flex-wrap items-center gap-4 text-sm">
         {operator.role === 'admin' && <><button className="underline" onClick={() => setSettings(false)}>Atendimento</button><button className="underline" onClick={() => setSettings(true)}>Configurações</button></>}
         <p>{operator.name}</p><button className="underline" onClick={logout}>Sair</button>

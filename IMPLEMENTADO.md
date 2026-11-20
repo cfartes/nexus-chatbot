@@ -126,6 +126,8 @@ Rode `powershell -NoProfile -File backend/tests/run_local.ps1` para criar um Pos
 
 O painel em `frontend` usa Next.js App Router, TypeScript, Tailwind e Astryx. Inclui login, filas de conversas, histórico, envio e status de entregas, transferência, controle da IA, QR Code, operadores e fontes do RAG.
 
+O logo fornecido para o Nexus Atende aparece no login e no cabeçalho do painel em uma versão WebP.
+
 Os cartões de Configurações indicam se faltam dados, se há uma configuração parcial ou falha conhecida, ou se os campos necessários estão preenchidos. A cor da configuração não substitui um teste real do provedor.
 
 Com a API em `http://127.0.0.1:8085`, configure `NEXUS_ATENDE_PUBLIC_ORIGIN=http://127.0.0.1:3000` no backend local. Em `frontend`, execute `corepack pnpm install --frozen-lockfile` e `corepack pnpm dev --hostname 127.0.0.1`. Acesse `http://127.0.0.1:3000`. Defina `NEXUS_ATENDE_API_URL` no ambiente do Next.js para usar outro endereço de API. O navegador usa rotas de mesma origem para sessão e SSE.
