@@ -365,7 +365,19 @@ async def check() -> None:
                 assert await connection.scalar(text("SELECT openwa_number_verified FROM nexus_atende.tenants")) is False
 
             assert (await request("GET", "", headers=third, prefix="clients"))[0] == 403
-            details = {"address": "Rua Teste, 123", "document": "12.345.678/0001-95",
+            with patch("src.services.clients.request_json", return_value={
+                "logradouro": "Praça da Sé", "bairro": "Sé", "localidade": "São Paulo", "uf": "SP",
+            }) as lookup:
+                status, postal = await call("clients", "GET", "cep/01001-000")
+            assert status == 200 and json.loads(postal)["street"] == "Praça da Sé"
+            assert lookup.call_args.args[0] == "https://viacep.com.br/ws/01001000/json/"
+            assert (await call("clients", "GET", "cep/0100"))[0] == 422
+            with patch("src.services.clients.request_json", return_value={"erro": "true"}):
+                assert (await call("clients", "GET", "cep/99999999"))[0] == 404
+            with patch("src.services.clients.request_json", side_effect=TimeoutError):
+                assert (await call("clients", "GET", "cep/01001000"))[0] == 503
+            details = {"postal_code": "01001-000", "street": "Praça da Sé", "number": "123",
+                       "neighborhood": "Sé", "city": "São Paulo", "state": "SP", "document": "12.345.678/0001-95",
                        "contact_phone": "+5511999990001", "contact_email": "contact@example.test"}
             client_data = {"name": "Cliente Piloto", "details": details, "admin": {"name": "Admin Piloto", "email": "pilot@example.test"}}
             with patch("src.services.resend.request_json", return_value={"id": "client-invite"}) as email:
@@ -375,6 +387,7 @@ async def check() -> None:
             assert email.call_args.args[2]["from"] == "from@example.test"
             client_id = json.loads(created_client)["id"]
             assert json.loads(created_client)["details"]["document"] == "12345678000195"
+            assert json.loads(created_client)["details"]["postal_code"] == "01001000"
             assert b"contact@example.test" not in (await request("GET", "companies"))[2]
             token = email.call_args.args[2]["text"].split("#")[-1]
             assert (await call("operators", "POST", "accept-invite", {"token": token, "password": "test-password-123"}))[0] == 204
@@ -425,14 +438,14 @@ async def check() -> None:
             status, _, platform = await request("POST", "login", ar, (origin_header,))
             assert status == 200 and json.loads(platform)["platform_admin"] is True
             assert (await call("clients", "DELETE", str(TENANT)))[0] == 422
-            assert (await call("clients", "PUT", client_id, {"name": "Piloto atualizado", "details": {**details, "address": "Rua Nova, 321"}}))[0] == 204
+            assert (await call("clients", "PUT", client_id, {"name": "Piloto atualizado", "details": {**details, "street": "Rua Nova", "number": "321"}}))[0] == 204
             assert (await call("clients", "DELETE", client_id))[0] == 204
             assert (await request("GET", "me", headers=pilot))[0] == 401
             assert (await request("POST", "login", pilot_login, (origin_header,)))[0] == 401
             assert client_id.encode() not in (await request("GET", "companies"))[2]
             archived = next(row for row in json.loads((await call("clients", "GET", ""))[1]) if row["id"] == client_id)
             assert archived["archived_at"] and archived["name"] == "Piloto atualizado"
-            assert archived["details"]["address"] == "Rua Nova, 321"
+            assert archived["details"]["street"] == "Rua Nova" and archived["details"]["number"] == "321"
             async with tenant_transaction(engine, pilot_tenant) as connection:
                 assert await connection.scalar(text("SELECT count(*) FROM nexus_atende.messages")) == 1
                 assert await connection.scalar(text("SELECT status FROM nexus_atende.work_items")) == "cancelled"
@@ -443,9 +456,10 @@ async def check() -> None:
             with (patch("src.services.openwa.monotonic", return_value=1000) as clock,
                   patch("src.services.openwa.time", side_effect=lambda: clock.return_value),
                   patch("src.services.openwa.request_json", side_effect=[limited, ready_session, {"data": [active_hook]}]) as gateway):
-                await worker.sync_webhook()
+                assert await worker.sync_webhook() == 90
                 status, gateway_state = await call("integrations", "GET", "")
                 assert status == 200 and json.loads(gateway_state)["openwa_webhook_status"] == "rate_limited"
+                assert json.loads(gateway_state)["openwa_retry_after"] == 90
                 with patch("src.services.openwa.OpenWAClient._cooldown", {}):
                     status, deferred = await call("whatsapp", "GET", "connection")
                 deferred_session = json.loads(deferred)
@@ -454,7 +468,9 @@ async def check() -> None:
                 await worker.sync_webhook()
                 assert gateway.call_count == 1
                 clock.return_value = 1091
-                await worker.sync_webhook()
+                status, expired = await call("integrations", "GET", "")
+                assert status == 200 and json.loads(expired)["openwa_webhook_status"] == "pending"
+                assert await worker.sync_webhook() == 300
                 assert gateway.call_count == 3
                 status, recovered = await call("integrations", "GET", "")
                 assert status == 200 and json.loads(recovered)["openwa_webhook_status"] == "active"

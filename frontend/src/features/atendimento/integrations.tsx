@@ -12,6 +12,7 @@ interface IntegrationView {
   ollama_url: string | null; resend_sender: string; resend_recipient: string; resend_has_key: boolean;
   openwa_url: string | null; openwa_webhook_status: 'not_configured' | 'pending' | 'active' | 'error' | 'rate_limited'; openwa_has_key: boolean;
   openwa_webhook_error: string | null;
+  openwa_retry_after: number;
 }
 
 const receptionLabel = { not_configured: 'Aguardando configuração', pending: 'Cadastro automático pendente',
@@ -105,7 +106,9 @@ export function Integrations({ refreshConnection }: { refreshConnection: () => P
       <form id="settings-openwa" className="grid gap-3" onSubmit={event => void save(event, 'openwa')}>
         <label className="grid gap-1 text-sm">Endereço do servidor<input key={config.openwa_url ?? ''} className={field} name="base_url" type="url" required maxLength={300} defaultValue={config.openwa_url ?? ''} placeholder="https://openwa.exemplo.com/api" /></label>
         <p className="wrap-anywhere text-sm">Recebimento: {receptionLabel[config.openwa_webhook_status]}</p>
-        {config.openwa_webhook_error && <p className="text-sm text-slate-700">{config.openwa_webhook_error}</p>}
+        {config.openwa_retry_after > 0
+          ? <p className="text-sm text-slate-700">O OpenWA retornou HTTP 429. Espera restante de cerca de {config.openwa_retry_after} s.</p>
+          : config.openwa_webhook_error && <p className="text-sm text-slate-700">{config.openwa_webhook_error}</p>}
         <label className="grid gap-1 text-sm">Chave OpenWA<input className={field} name="api_key" type="password" autoComplete="new-password" maxLength={1000} placeholder={config.openwa_has_key ? 'Chave salva' : 'Informe a chave'} /></label>
         <p className="text-sm text-slate-600">Use um endereço HTTPS autorizado terminado em /api. Ao trocar de servidor, informe a chave dele. Consulte o status e o QR Code em WhatsApp.</p>
       </form>

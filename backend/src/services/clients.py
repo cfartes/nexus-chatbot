@@ -1,11 +1,19 @@
+from asyncio import to_thread
 from hashlib import sha256
 from secrets import token_urlsafe
 from uuid import UUID, uuid4
 
 from src.repositories.tenants import TenantRepository
-from src.schemas.tenants import ClientCreate, ClientDetails, ClientInvite, ClientRecord, ClientUpdate
+from src.schemas.tenants import ClientCreate, ClientDetails, ClientInvite, ClientRecord, ClientUpdate, PostalAddress
 from src.services.operators import OperatorService
 from src.services.resend import ResendRejected
+from src.services.provider_http import request_json
+
+STATES = frozenset("AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split())
+
+
+class PostalLookupUnavailable(Exception):
+    pass
 
 
 class ClientService:
@@ -16,6 +24,22 @@ class ClientService:
 
     async def list(self) -> list[ClientRecord]:
         return await self._tenants.clients(include_details=True)
+
+    async def lookup_address(self, postal_code: str) -> PostalAddress:
+        digits = postal_code.replace("-", "")
+        try:
+            response = await to_thread(request_json, f"https://viacep.com.br/ws/{digits}/json/", {})
+            if not isinstance(response, dict):
+                raise ValueError("Unexpected postal lookup response")
+            if str(response.get("erro", "")).lower() == "true":
+                raise LookupError
+            address = PostalAddress(postal_code=digits, street=response["logradouro"], neighborhood=response["bairro"],
+                                    city=response["localidade"], state=response["uf"])
+            if not address.city or address.state not in STATES:
+                raise ValueError("Incomplete postal lookup response")
+        except (OSError, ValueError, KeyError):
+            raise PostalLookupUnavailable from None
+        return address
 
     async def create(self, content: ClientCreate) -> ClientInvite:
         content.name = _name(content.name)
@@ -73,11 +97,20 @@ def _details(content: ClientDetails) -> ClientDetails:
     address = content.address.strip()
     document = "".join(char for char in content.document.upper() if char.isalnum())
     phone = content.contact_phone.strip()
-    if not address or not content.contact_email:
-        raise ValueError("Informe o endereço e o e-mail de contato.")
+    if not content.contact_email:
+        raise ValueError("Informe o e-mail de contato.")
     if not ((len(document) == 11 and document.isdecimal()) or
             (len(document) == 14 and document[-2:].isdecimal())):
         raise ValueError("Informe um CPF ou CNPJ com 11 ou 14 caracteres, respectivamente.")
     if not 8 <= sum(char.isdecimal() for char in phone) <= 15:
         raise ValueError("Informe um telefone de contato válido.")
-    return ClientDetails(address=address, document=document, contact_phone=phone, contact_email=content.contact_email.lower())
+    postal_code = content.postal_code.replace("-", "")
+    street, number, neighborhood, city = (value.strip() for value in (content.street, content.number, content.neighborhood, content.city))
+    if any((postal_code, street, number, neighborhood, city, content.state)):
+        if not all((postal_code, street, number, neighborhood, city)) or content.state not in STATES:
+            raise ValueError("Informe CEP, rua, número, bairro, cidade e UF.")
+        address = ""
+    elif not address:
+        raise ValueError("Informe o endereço.")
+    return ClientDetails(address=address, postal_code=postal_code, street=street, number=number, neighborhood=neighborhood, city=city,
+                         state=content.state, document=document, contact_phone=phone, contact_email=content.contact_email.lower())

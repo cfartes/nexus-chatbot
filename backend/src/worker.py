@@ -34,20 +34,21 @@ class Worker:
         self._outgoing = OutgoingMessageRepository(engine)
         self._bot = BotService(BotRepository(engine), KnowledgeRepository(engine), self._integrations)
 
-    async def sync_webhook(self) -> None:
+    async def sync_webhook(self) -> int:
         tenant_id = self._tenant_id
         url = self._integrations.webhook_url(tenant_id)
         if not url or not self._webhook_secret:
-            return
+            return 120
         async with self._repository.webhook_lock(tenant_id) as acquired:
             if not acquired:
-                return
+                return 120
             client = await self._integrations.openwa(tenant_id)
             tenant = await self._tenants.get_connection(tenant_id)
             if not client:
-                return
+                return 120
             status = "pending"
             detail = None
+            next_check = 120
             if tenant and tenant.openwa_session_id and tenant.phone_number:
                 try:
                     session_status, phone = await client.session_identity(tenant.openwa_session_id)
@@ -56,6 +57,7 @@ class Worker:
                     if verified and binding_matches:
                         await client.ensure_webhook(tenant.openwa_session_id, url, self._webhook_secret)
                         status = "active"
+                        next_check = 300
                     elif session_status in {"READY", "CONNECTED"} and phone:
                         status = "error"
                         detail = "O telefone conectado no OpenWA difere do telefone salvo."
@@ -64,12 +66,14 @@ class Worker:
                 except OpenWARateLimited as error:
                     status = "rate_limited"
                     detail = str(error)
+                    next_check = max(5, error.retry_after)
                 except OpenWAUnavailable as error:
                     status = "error"
                     detail = str(error) or "Falha na consulta ao OpenWA."
             saved = await self._repository.get(tenant_id)
             if (saved.openwa_webhook_status, saved.openwa_webhook_error) != (status, detail):
                 await self._repository.save(tenant_id, {"openwa_webhook_status": status, "openwa_webhook_error": detail})
+            return next_check
 
     async def run_once(self) -> bool:
         resend = await self._integrations.resend(self._tenant_id)
@@ -123,8 +127,8 @@ async def run() -> None:
                     did_work = await worker.run_once()
                     processed.append(did_work)
                     if not did_work and monotonic() >= next_sync[client_id]:
-                        await worker.sync_webhook()
-                        next_sync[client_id] = monotonic() + 120
+                        delay = await worker.sync_webhook()
+                        next_sync[client_id] = monotonic() + delay
                 if any(processed):
                     continue
             except SQLAlchemyError as error:

@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from src.api.routes.auth import superadministrator, superadministrator_mutation
 from src.repositories.tenants import ClientConflict
 from src.schemas.auth import Operator
-from src.schemas.tenants import ClientCreate, ClientInvite, ClientRecord, ClientUpdate
-from src.services.clients import ClientService
+from src.schemas.tenants import ClientCreate, ClientInvite, ClientRecord, ClientUpdate, PostalAddress, PostalCode
+from src.services.clients import ClientService, PostalLookupUnavailable
 from src.services.integrations import IntegrationUnavailable
 
 router = APIRouter(prefix="/clients")
@@ -27,6 +27,17 @@ Service = Annotated[ClientService, Depends(clients)]
 async def list_clients(_actor: Reader, service: Service, response: Response) -> list[ClientRecord]:
     response.headers["Cache-Control"] = "no-store"
     return await service.list()
+
+
+@router.get("/cep/{postal_code}")
+async def postal_address(postal_code: PostalCode, _actor: Reader, service: Service, response: Response) -> PostalAddress:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await service.lookup_address(postal_code)
+    except LookupError:
+        raise HTTPException(404, "CEP não encontrado. Preencha o endereço manualmente.") from None
+    except PostalLookupUnavailable:
+        raise HTTPException(503, "A consulta de CEP está indisponível. Preencha o endereço manualmente.") from None
 
 
 @router.post("", status_code=201)

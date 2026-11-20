@@ -7,9 +7,9 @@ from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr
 
 from src.repositories.integrations import IntegrationRepository, StoredIntegrations
-from src.schemas.integrations import AISettings, IntegrationsView, OpenWASettings, ResendSettings
+from src.schemas.integrations import AISettings, IntegrationsView, OpenWASettings, ResendSettings, WebhookStatus
 from src.services.openai import OpenAIClient
-from src.services.openwa import OpenWAClient
+from src.services.openwa import OpenWAClient, remaining_cooldown
 from src.services.resend import ResendClient
 from src.settings import Settings
 
@@ -58,6 +58,14 @@ class IntegrationService:
         endpoint = saved.openwa_url or self._openwa_url
         has_openwa_key = bool(saved.openwa_key or self._settings.openwa_api_key)
         webhook_configured = endpoint in self._openwa_allowed and has_openwa_key and self.webhook_url(tenant_id) is not None
+        retry_after = remaining_cooldown(saved.openwa_cooldowns.get(endpoint, 0)) if endpoint and webhook_configured else 0
+        status: WebhookStatus = local.openwa_webhook_status if webhook_configured else "not_configured"
+        detail = local.openwa_webhook_error if webhook_configured else None
+        if retry_after:
+            status = "rate_limited"
+        elif status == "rate_limited":
+            status = "pending"
+            detail = "O intervalo do OpenWA terminou. Aguardando a confirmação do recebimento."
         return IntegrationsView(provider=saved.provider or "openai", model=saved.model or self._settings.openai_model,
             embedding_model=saved.embedding_model or "nomic-embed-text",
             ai_has_key=bool(saved.ai_key or (saved.provider in (None, "openai") and self._settings.openai_api_key)),
@@ -65,8 +73,7 @@ class IntegrationService:
             resend_sender=saved.sender if saved.sender is not None else self._settings.resend_from or "",
             resend_recipient=self._test_recipient(saved),
             resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=endpoint,
-            openwa_webhook_status=local.openwa_webhook_status if webhook_configured else "not_configured",
-            openwa_webhook_error=local.openwa_webhook_error if webhook_configured else None,
+            openwa_webhook_status=status, openwa_webhook_error=detail, openwa_retry_after=retry_after,
             openwa_has_key=has_openwa_key)
 
     def webhook_url(self, tenant_id: UUID) -> str | None:

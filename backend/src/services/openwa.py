@@ -42,6 +42,10 @@ def _retry_delay(value: str) -> int:
         return 60
 
 
+def remaining_cooldown(until: float) -> int:
+    return max(0, ceil(until - time()))
+
+
 def account_phone(payload: object, depth: int = 0) -> str | None:
     if not isinstance(payload, dict) or depth > 2:
         return None
@@ -83,7 +87,7 @@ class OpenWAClient:
             remaining = self._cooldown.get(self._base_url, 0) - monotonic()
             if remaining <= 0:
                 self._cooldown.pop(self._base_url, None)
-            return max(0, ceil(max(remaining, self._retry_until - time())))
+            return max(ceil(remaining), remaining_cooldown(self._retry_until))
 
     async def _call(self, operation: Callable[..., object], *args: object) -> object:
         delay = self.retry_after()
@@ -114,6 +118,9 @@ class OpenWAClient:
             with self._cooldown_lock:
                 deadline = monotonic() + delay
                 self._cooldown[self._base_url] = max(deadline, self._cooldown.get(self._base_url, 0))
+            resource = path.split("?", 1)[0].rsplit("/", 1)[-1]
+            logger.warning("OpenWA rate limit during %s; retry in %s seconds",
+                           resource if resource in {"webhooks", "send-text", "start", "qr", "sessions"} else "session query", delay)
             raise OpenWARateLimited(delay, deadline=time() + delay) from None
 
     def _read(self, path: str) -> object:
