@@ -14,7 +14,7 @@
 - `POST /api/v1/webhooks/openwa/{tenant_id}` recebe eventos `message.received`, valida HMAC sobre o corpo original e grava mensagens de texto diretas no PostgreSQL. A primeira mensagem cria o contato e coloca a conversa na fila. Entregas duplicadas não geram novas mensagens ou contatos.
 - A API de conversas mostra a fila compartilhada, as conversas da IA e os atendimentos do operador. Administradores podem consultar todos os atendimentos atribuídos e transferi-los dentro da empresa. A atribuição é atômica no PostgreSQL.
 - O operador responsável pode enfileirar uma resposta de texto. A API registra o identificador informado pelo painel para deduplicar reenvios do mesmo comando. O worker grava o ID retornado pelo OpenWA e o histórico exibe o estado do envio. Um resultado incerto fica visível e exige conferência humana antes de novo envio.
-- A IA do piloto usa OpenAI e pgvector. A base aceita texto, TXT, DOCX, PDF com texto e páginas de uma origem HTTPS autorizada. A recuperação busca só na base da empresa, usa o histórico de até 15 minutos e conserva um resumo de atendimentos anteriores para retornos.
+- A IA do piloto usa OpenAI e pgvector. A base aceita texto, TXT, Markdown (.md), DOCX, PDF com texto e páginas de uma origem HTTPS autorizada. A recuperação busca só na base da empresa, usa o histórico de até 15 minutos e conserva um resumo de atendimentos anteriores para retornos.
 - Quando a conversa entra na fila humana, o worker pode enviar um e-mail pelo Resend com a referência da conversa. O e-mail não inclui telefone ou conteúdo do WhatsApp. Retentativas de e-mail usam a mesma chave de idempotência.
 - Administradores podem cadastrar, atualizar e desativar operadores. A desativação revoga sessões e devolve as conversas atribuídas à fila. O worker limpa sessões e tentativas expiradas.
 
@@ -42,7 +42,7 @@ As rotas exigem sessão autenticada. Para assumir ou transferir, envie também a
 | `POST /api/v1/operators/{id}/invite` | Reenviar um convite pendente, substituindo o link anterior. |
 | `POST /api/v1/operators/accept-invite` | Definir a primeira senha com um convite válido por 24 horas, de uso único. |
 | `GET` e `PUT /api/v1/knowledge` | Listar fontes ou substituir uma fonte por `source` e `text`. |
-| `PUT /api/v1/knowledge/file?kind=pdf&source=Manual` | Envie o arquivo como corpo binário. `kind` aceita `pdf`, `docx` e `txt`. Limites de 4 MiB e 40.000 caracteres extraídos. |
+| `PUT /api/v1/knowledge/file?kind=pdf&source=Manual` | Envie o arquivo como corpo binário. `kind` aceita `pdf`, `docx`, `txt` e `md`. Limites de 4 MiB e 40.000 caracteres extraídos. |
 | `PUT /api/v1/knowledge/url` | Importar ou atualizar uma página com `source` e `url`. A origem vem de `NEXUS_ATENDE_KNOWLEDGE_URL_ORIGIN`. |
 | `DELETE /api/v1/knowledge?source=Manual` | Remover a fonte e seus vetores. |
 | `GET` e `PUT /api/v1/knowledge/welcome` | Consultar ou salvar a saudação da empresa com `message` de até 500 caracteres. Campo vazio desativa o texto fixo. |

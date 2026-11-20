@@ -127,7 +127,7 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
         if (!(document instanceof File) || !document.size) throw new ApiError(422, 'Selecione um arquivo com conteúdo.');
         if (document.size > 4 * 1024 ** 2) throw new ApiError(413, 'O arquivo excede o limite de 4 MiB.');
         const kind = document.name.split('.').at(-1)?.toLowerCase();
-        if (!kind || !['txt', 'pdf', 'docx'].includes(kind)) throw new ApiError(422, 'Selecione um arquivo TXT, PDF ou DOCX.');
+        if (!kind || !['txt', 'md', 'pdf', 'docx'].includes(kind)) throw new ApiError(422, 'Selecione um arquivo TXT, Markdown (.md), PDF ou DOCX.');
         setFileProgress(0);
         try {
           saved = await upload<Source>(`/knowledge/file?${new URLSearchParams({ kind, source })}`, document,
@@ -241,7 +241,7 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
           <label className="grid gap-1 text-sm">Origem<select value={importKind} disabled={busy} onChange={event => { setImportKind(event.target.value); setImportError(''); }} className={field}><option value="texto">Texto</option><option value="arquivo">Arquivo</option><option value="url">Página web</option></select></label>
           {importKind === 'texto' && <label className="grid gap-1 text-sm">Conteúdo<textarea name="text" required maxLength={40_000} rows={4} className={field} /></label>}
           {importKind === 'url' && <label className="grid gap-1 text-sm">URL autorizada<input name="url" required type="url" maxLength={2000} className={field} /></label>}
-          {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, PDF ou DOCX<input name="file" required type="file" accept=".txt,.pdf,.docx" disabled={busy} onChange={() => setImportError('')} className={field} /></label>}
+          {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, Markdown (.md), PDF ou DOCX<input name="file" required type="file" accept=".txt,.md,.pdf,.docx" disabled={busy} onChange={() => setImportError('')} className={field} /></label>}
         </form>
       </SettingsCard>
     <SettingsCard title="Avisos de atendimento humano" state={alertError ? 'warning' : savedAlertEmail === undefined ? 'loading' : savedAlertEmail ? 'ready' : 'missing'} action={<Button type="submit" form="settings-handoff-email" label="Salvar e-mail" variant="primary" isDisabled={busy || alertEmail === undefined} />}>

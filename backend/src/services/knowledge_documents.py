@@ -13,7 +13,7 @@ from pypdf import Configuration, PdfReader, apply_configuration
 
 from src.services.provider_http import NoRedirect
 
-DocumentFormat = Literal["txt", "pdf", "docx"]
+DocumentFormat = Literal["txt", "md", "pdf", "docx"]
 MAX_UPLOAD = 4 * 1024**2
 MAX_DOCUMENT_TEXT = 40_000
 _PDF_TEXT_LIMIT_EXIT = 42
@@ -26,7 +26,7 @@ class DocumentImportError(ValueError):
 
 def extract_document(kind: DocumentFormat, raw: bytes) -> str:
     try:
-        if kind == "txt":
+        if kind in {"txt", "md"}:
             return raw.decode("utf-8-sig")
         if kind == "docx":
             with ZipFile(BytesIO(raw)) as archive, archive.open("word/document.xml") as document:

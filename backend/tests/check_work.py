@@ -206,12 +206,15 @@ async def check() -> None:
             status, _, sourced = await request("GET", "", headers=admin, prefix="conversations", query=b"queue=bot")
             assert status == 200 and next(row for row in json.loads(sourced) if row["id"] == bot_id)["origin_name"] == "RotaFY"
 
+            markdown = "# Configuração\n\n- Acesse **WhatsApp** no painel."
             with patch("src.services.openai.request_json", return_value=vector):
-                for kind, document in (("txt", b"Nexus"), ("docx", sample_docx()), ("pdf", sample_pdf())):
+                for kind, document in (("txt", b"Nexus"), ("md", markdown.encode("utf-8-sig")), ("docx", sample_docx()), ("pdf", sample_pdf())):
                     status, _, body = await request("PUT", "file", document, admin, prefix="knowledge",
                                                     query=f"kind={kind}&source={kind}".encode())
                     assert status == 200, (kind, status, body)
                 assert (await call("knowledge", "PUT", "url", {"source": "Web", "url": "https://other.test/"}))[0] == 422
+            async with tenant_transaction(engine, TENANT) as connection:
+                assert await connection.scalar(text("SELECT content FROM nexus_atende.knowledge_chunks WHERE source = 'md'")) == markdown
             with patch("src.services.openai.request_json") as embeddings:
                 status, _, too_long = await request("PUT", "file", sample_pdf(b"A" * 40_001), admin,
                                                     prefix="knowledge", query=b"kind=pdf&source=Manual")
