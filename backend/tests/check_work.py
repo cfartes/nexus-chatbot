@@ -306,6 +306,7 @@ async def check() -> None:
             assert claude.call_args.args[0] == "https://api.anthropic.com/v1/messages"
 
             production = Settings(public_origin="https://atende.nexusdataanalytics.tech", openwa_base_url=None, openwa_allowed_urls="")
+            production = production.model_copy(update={"openwa_webhook_tenant_id": None})
             known_endpoint = "https://openwa.187-77-58-10.sslip.io/api"
             service = IntegrationService(IntegrationRepository(engine), production)
             saved = await service.save_openwa(OTHER, OpenWASettings(base_url=known_endpoint, api_key=SecretStr("test-only")))
@@ -352,6 +353,8 @@ async def check() -> None:
                      (b"x-csrf-token", pilot_cookies["nexus_atende_csrf"].value.encode()), origin_header)
             assert (await request("GET", "", headers=pilot, prefix="clients"))[0] == 403
             assert (await request("PUT", "ai", b'{"provider":"openai","model":"test"}', pilot, prefix="integrations"))[0] == 403
+            assert (await request("GET", "", headers=pilot, prefix="integrations"))[0] == 403
+            assert (await request("PUT", "openwa", b'{"api_key":"different-key"}', pilot, prefix="integrations"))[0] == 403
             assert (await request("GET", "connection", headers=pilot, prefix="whatsapp"))[0] == 200
             pilot_tenant = UUID(client_id)
             pilot_session = uuid4()
@@ -360,6 +363,10 @@ async def check() -> None:
                     UPDATE nexus_atende.tenants SET openwa_session_id = :session, openwa_number_verified = true
                     WHERE id = :tenant
                 """), {"session": pilot_session, "tenant": pilot_tenant})
+            with patch("src.services.openwa.request_json", return_value={"status": "READY"}) as shared_gateway:
+                status, _, connected_pilot = await request("GET", "connection", headers=pilot, prefix="whatsapp")
+            assert status == 200 and json.loads(connected_pilot)["status"] == "READY"
+            assert shared_gateway.call_args.args[:2] == (f"{endpoint}/sessions/{pilot_session}", {"X-API-Key": "openwa-test-secret"})
             pilot_event = json.dumps({"event": "message.received", "sessionId": str(pilot_session), "data": {
                 "id": "pilot-message", "from": "5511888888888@c.us", "fromMe": False, "body": "Olá",
             }}).encode()

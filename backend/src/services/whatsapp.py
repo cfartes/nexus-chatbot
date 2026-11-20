@@ -54,7 +54,7 @@ class WhatsAppService:
                 raise ValueError("Salve o número do WhatsApp antes de iniciar o pareamento")
             client = await self._integrations.openwa(tenant_id)
             if client is None:
-                raise ValueError("Salve o servidor e a chave OpenWA em Integrações")
+                raise ValueError("Solicite ao SuperAdmin que configure o servidor e a chave OpenWA")
             session_id = tenant.openwa_session_id
             if session_id is None:
                 session_id = await client.ensure_session(f"nexus-atende-{tenant_id}")

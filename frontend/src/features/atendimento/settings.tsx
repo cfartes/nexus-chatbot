@@ -124,7 +124,7 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
     <h2 className="text-2xl font-semibold">Configurações</h2>
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-800">{error}</p>}
     {status && <p role="status" className="rounded-lg bg-teal-50 p-3 text-teal-900">{status}</p>}
-    <Integrations refreshConnection={loadConnection} platformAdmin={platformAdmin} />
+    {platformAdmin && <Integrations refreshConnection={loadConnection} />}
     <section className={settingsGrid}>
       <SettingsCard title="WhatsApp" state={connectionFailed ? 'warning' : !connection ? 'loading' : connected && connection.phone_number ? 'ready' : hasConnection ? 'warning' : 'missing'} detail={phoneDetail} action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
         <p>{connection?.phone_number && !connection.session_id ? phoneDetail : connectionLabels[connection?.status ?? ''] ?? 'Consultando…'}</p>

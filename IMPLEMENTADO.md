@@ -134,7 +134,7 @@ Administradores e operadores podem alterar a própria senha no menu superior. A 
 
 Na tela de login, selecione uma empresa ativa ou **SuperAdmin** e informe o e-mail e a senha. O instalador habilita o acesso de SuperAdmin para o administrador inicial da Nexus e conserva a senha atual. O SuperAdmin configura IA e Resend para toda a plataforma e gerencia empresas no menu **Clientes**. Ao cadastrar uma empresa, o Resend envia um convite ao administrador inicial para definir a senha.
 
-Cada administrador de cliente mantém o WhatsApp, operadores e base de conhecimento da própria empresa. Arquivar um cliente remove a empresa do login, encerra suas sessões, cancela trabalhos pendentes e preserva o histórico. A empresa principal da plataforma fica protegida do arquivamento.
+Somente o SuperAdmin configura o endereço do servidor e a chave compartilhada do OpenWA. Cada administrador de cliente gerencia o número, o pareamento, o QR Code, os operadores e a base de conhecimento da própria empresa. Arquivar um cliente remove a empresa do login, encerra suas sessões, cancela trabalhos pendentes e preserva o histórico. A empresa principal da plataforma fica protegida do arquivamento.
 
 Os cartões de Configurações indicam se faltam dados, se há uma configuração parcial ou falha conhecida, ou se os campos necessários estão preenchidos. A cor da configuração não substitui um teste real do provedor.
 

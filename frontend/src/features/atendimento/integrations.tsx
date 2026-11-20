@@ -18,7 +18,7 @@ const receptionLabel = { not_configured: 'Aguardando configuração', pending: '
 
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
 
-export function Integrations({ refreshConnection, platformAdmin }: { refreshConnection: () => Promise<void>; platformAdmin: boolean }) {
+export function Integrations({ refreshConnection }: { refreshConnection: () => Promise<void> }) {
   const [config, setConfig] = useState<IntegrationView>();
   const [provider, setProvider] = useState<Provider>('openai');
   const [model, setModel] = useState(models.openai);
@@ -66,7 +66,7 @@ export function Integrations({ refreshConnection, platformAdmin }: { refreshConn
     {status && <p role="status" className="text-sm text-teal-800">{status}</p>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     {config ? <section className={settingsGrid}>
-      {platformAdmin && <><SettingsCard title="Inteligência artificial" state={failed === 'ai' ? 'warning' : aiReady ? 'ready' : aiPartial ? 'warning' : 'missing'} detail={failed === 'ai' ? 'Falha ao atualizar a configuração' : aiReady ? 'Provedor e modelo definidos' : 'Confira o provedor, a chave e os embeddings'} action={<Button type="submit" form="settings-ai" label="Salvar IA" variant="primary" isDisabled={busy} />}>
+      <SettingsCard title="Inteligência artificial" state={failed === 'ai' ? 'warning' : aiReady ? 'ready' : aiPartial ? 'warning' : 'missing'} detail={failed === 'ai' ? 'Falha ao atualizar a configuração' : aiReady ? 'Provedor e modelo definidos' : 'Confira o provedor, a chave e os embeddings'} action={<Button type="submit" form="settings-ai" label="Salvar IA" variant="primary" isDisabled={busy} />}>
       <form id="settings-ai" className="grid gap-3" onSubmit={event => void save(event, 'ai')}>
         <label className="grid gap-1 text-sm">Provedor<select className={field} name="provider" value={provider} onChange={event => {
           const selected = event.target.value as Provider;
@@ -94,7 +94,7 @@ export function Integrations({ refreshConnection, platformAdmin }: { refreshConn
           finally { setBusy(false); }
         }} />
       </form>
-      </SettingsCard></>}
+      </SettingsCard>
       <SettingsCard title="OpenWA" state={failed === 'openwa' || config.openwa_webhook_status === 'error' ? 'warning' : openwaReady ? 'ready' : openwaPartial ? 'warning' : 'missing'} detail={failed === 'openwa' ? 'Falha ao atualizar ou consultar o OpenWA' : receptionLabel[config.openwa_webhook_status]} action={<Button type="submit" form="settings-openwa" label="Salvar OpenWA" variant="primary" isDisabled={busy} />}>
       <form id="settings-openwa" className="grid gap-3" onSubmit={event => void save(event, 'openwa')}>
         <label className="grid gap-1 text-sm">Endereço do servidor<input key={config.openwa_url ?? ''} className={field} name="base_url" type="url" required maxLength={300} defaultValue={config.openwa_url ?? ''} placeholder="https://openwa.exemplo.com/api" /></label>
@@ -103,7 +103,7 @@ export function Integrations({ refreshConnection, platformAdmin }: { refreshConn
         <p className="text-sm text-slate-600">Use um endereço HTTPS autorizado terminado em /api. Ao trocar de servidor, informe a chave dele. Consulte o status e o QR Code em WhatsApp.</p>
       </form>
       </SettingsCard>
-    </section> : <section className={settingsGrid}>{(platformAdmin ? ['Inteligência artificial', 'Resend', 'OpenWA'] : ['OpenWA']).map(title =>
+    </section> : <section className={settingsGrid}>{['Inteligência artificial', 'Resend', 'OpenWA'].map(title =>
       <SettingsCard key={title} title={title} state={error ? 'warning' : 'loading'} action={null}>
         <p className="text-sm text-slate-600">{error ? 'Não foi possível consultar esta integração.' : 'Consultando configuração…'}</p>
       </SettingsCard>

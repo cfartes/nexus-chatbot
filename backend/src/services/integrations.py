@@ -54,8 +54,8 @@ class IntegrationService:
         local = await self._repository.get(tenant_id)
         shared_id = self._shared_tenant(tenant_id)
         saved = local if shared_id == tenant_id else await self._repository.get(shared_id)
-        endpoint = local.openwa_url or self._openwa_url
-        has_openwa_key = bool(local.openwa_key or self._settings.openwa_api_key)
+        endpoint = saved.openwa_url or self._openwa_url
+        has_openwa_key = bool(saved.openwa_key or self._settings.openwa_api_key)
         webhook_configured = endpoint in self._openwa_allowed and has_openwa_key and self.webhook_url(tenant_id) is not None
         return IntegrationsView(provider=saved.provider or "openai", model=saved.model or self._settings.openai_model,
             embedding_model=saved.embedding_model or "nomic-embed-text",
@@ -112,13 +112,14 @@ class IntegrationService:
         return await self.view(tenant_id)
 
     async def save_openwa(self, tenant_id: UUID, config: OpenWASettings) -> IntegrationsView:
-        saved = await self._repository.get(tenant_id)
+        shared_id = self._shared_tenant(tenant_id)
+        saved = await self._repository.get(shared_id)
         current_url = saved.openwa_url or self._openwa_url
         endpoint = self._settings.normalize_openwa_url(config.base_url) if config.base_url else current_url
         if endpoint and endpoint not in self._openwa_allowed:
             raise ValueError("Este endereço OpenWA ainda não foi autorizado na implantação")
         if config.api_key:
-            await self._repository.save(tenant_id, {"openwa_url": endpoint, "openwa_key": self._encrypt(config.api_key),
+            await self._repository.save(shared_id, {"openwa_url": endpoint, "openwa_key": self._encrypt(config.api_key),
                                                   "openwa_webhook_status": "pending"}, reset_openwa_verification=True)
         elif endpoint != current_url or not (saved.openwa_key or self._settings.openwa_api_key):
             raise ValueError("Informe a chave do servidor OpenWA")
@@ -155,7 +156,7 @@ class IntegrationService:
         return ResendClient(key, sender, recipient or "") if key and sender else None
 
     async def openwa(self, tenant_id: UUID) -> OpenWAClient | None:
-        saved = await self._repository.get(tenant_id)
+        saved = await self._repository.get(self._shared_tenant(tenant_id))
         endpoint = saved.openwa_url or self._openwa_url
         if endpoint is None or endpoint not in self._openwa_allowed:
             return None
