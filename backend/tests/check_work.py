@@ -49,6 +49,7 @@ def sample_docx() -> bytes:
 async def check() -> None:
     os.environ.update({
         "NEXUS_ATENDE_CONFIG_KEY": Fernet.generate_key().decode(),
+        "NEXUS_ATENDE_OPENWA_ALLOWED_URLS": "https://secondary-openwa.example.test/api",
         "NEXUS_ATENDE_OLLAMA_URL": "http://127.0.0.1:11434",
         "NEXUS_ATENDE_OPENWA_WEBHOOK_TENANT_ID": str(TENANT), "NEXUS_ATENDE_OPENWA_WEBHOOK_SECRET": SECRET,
         "NEXUS_ATENDE_OPENAI_API_KEY": "test-only", "NEXUS_ATENDE_RESEND_API_KEY": "test-only",
@@ -161,6 +162,21 @@ async def check() -> None:
             assert status == 200 and b"resend-test-secret" not in settings_view
             assert (await call("integrations", "GET", "", admin_only=False))[0] == 403
             assert (await call("integrations", "PUT", "openwa", {"api_key": "openwa-test-secret"}))[0] == 200
+            endpoint = "https://secondary-openwa.example.test/api"
+            assert (await call("integrations", "PUT", "openwa", {"base_url": endpoint}))[0] == 422
+            assert (await call("integrations", "PUT", "openwa", {"base_url": "https://unknown.example.test/api", "api_key": "openwa-test-secret"}))[0] == 422
+            status, updated = await call("integrations", "PUT", "openwa", {"base_url": f"{endpoint}/", "api_key": "openwa-test-secret"})
+            assert status == 200 and json.loads(updated)["openwa_url"] == endpoint
+            assert (await call("integrations", "PUT", "openwa", {"base_url": endpoint}))[0] == 200
+            number = {"phone_number": "+55 (11) 99999-9999"}
+            assert (await call("whatsapp", "PUT", "connection/phone", number, admin_only=False))[0] == 403
+            assert (await call("whatsapp", "PUT", "connection/phone", {"phone_number": "123"}))[0] == 422
+            status, saved_phone = await call("whatsapp", "PUT", "connection/phone", number)
+            assert status == 200 and json.loads(saved_phone)["phone_number"] == "+5511999999999"
+            with patch("src.services.openwa.request_json", return_value={"status": "READY"}) as gateway:
+                status, connection_body = await call("whatsapp", "GET", "connection")
+                assert status == 200 and json.loads(connection_body)["phone_number"] == "+5511999999999"
+                assert gateway.call_args.args[0] == f"{endpoint}/sessions/{SESSION}"
             async with tenant_transaction(engine, TENANT) as connection:
                 encrypted = await connection.scalar(text("SELECT config::text FROM nexus_atende.integrations"))
                 assert "resend-test-secret" not in encrypted and "openwa-test-secret" not in encrypted

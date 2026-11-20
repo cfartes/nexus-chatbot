@@ -5,6 +5,7 @@ import { TextArea } from '@astryxdesign/core/TextArea';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, errorMessage } from './api';
 import { Integrations } from './integrations';
+import { SettingsCard, settingsGrid } from './settings-card';
 
 type Member = { id: string; name: string; email: string; is_active: boolean; invite_pending: boolean; invite_sent: boolean | null };
 type Source = { source: string; chunks: number };
@@ -12,12 +13,12 @@ type Connection = { status: string; phone_number: string | null; session_id: str
 type Preview = { status: 'answered' | 'handoff' | 'unavailable'; message: string; sources: string[] };
 const previewLabel = { answered: 'Resposta automática', handoff: 'Encaminharia para um atendente', unavailable: 'IA indisponível' };
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
-const card = 'grid content-start gap-4 rounded-2xl border border-slate-200 bg-white p-5';
 
 export function Settings() {
   const [members, setMembers] = useState<Member[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [connection, setConnection] = useState<Connection>();
+  const [phone, setPhone] = useState('');
   const [qr, setQr] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -29,6 +30,7 @@ export function Settings() {
   const loadConnection = useCallback(async () => {
     const current = await api<Connection>('/whatsapp/connection');
     setConnection(current);
+    setPhone(current.phone_number ?? '');
     if (current.status === 'QR_READY' || current.status === 'STARTING') {
       setQr((await api<{ qr_code: string | null }>('/whatsapp/connection/qr')).qr_code);
     } else setQr(null);
@@ -84,15 +86,24 @@ export function Settings() {
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-red-800">{error}</p>}
     {status && <p role="status" className="rounded-lg bg-teal-50 p-3 text-teal-900">{status}</p>}
     <Integrations refreshConnection={loadConnection} />
-    <section className="grid gap-4 lg:grid-cols-3">
-      <section className={card}><h3 className="text-lg font-semibold">WhatsApp</h3>
+    <section className={settingsGrid}>
+      <SettingsCard title="WhatsApp" action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
         <p>{({ READY: 'Conectado', CONNECTED: 'Conectado', QR_READY: 'Aguardando pareamento', STARTING: 'Iniciando', NOT_CONFIGURED: 'Sessão não configurada', DISCONNECTED: 'Desconectado' } as Record<string, string>)[connection?.status ?? ''] ?? connection?.status ?? 'Consultando…'}</p>
-        {connection?.phone_number && <p className="text-sm text-slate-600">{connection.phone_number}</p>}
+        <form id="settings-phone" onSubmit={event => {
+          event.preventDefault();
+          void run(async () => {
+            const saved = await api<{ phone_number: string }>('/whatsapp/connection/phone', { method: 'PUT', body: JSON.stringify({ phone_number: phone }) });
+            setPhone(saved.phone_number);
+          }, 'Telefone do WhatsApp salvo.');
+        }}>
+          <label className="grid gap-1 text-sm">Número do WhatsApp<input name="phone_number" type="tel" autoComplete="tel" required maxLength={32} className={field} placeholder="+55 11 99999-9999" value={phone} onChange={event => setPhone(event.target.value)} /></label>
+          <p className="mt-2 text-sm text-slate-600">Informe o número da empresa com DDI e DDD.</p>
+        </form>
         {connection?.session_id && <p className="wrap-anywhere text-sm text-slate-600">Sessão: {connection.session_id}</p>}
         {qr?.startsWith('data:image/png;base64,') && <><p className="text-sm">Abra os aparelhos conectados no WhatsApp e escaneie o código.</p><img src={qr} alt="QR Code para parear o WhatsApp da empresa" width={192} height={192} /></>}
         <Button label="Atualizar conexão" isDisabled={busy} onClick={() => void run(loadConnection, 'Status atualizado.')} />
-      </section>
-      <section className={card}><h3 className="text-lg font-semibold">Operadores</h3>
+      </SettingsCard>
+      <SettingsCard title="Operadores" action={<Button type="submit" form="settings-operator" label="Enviar convite" variant="primary" isDisabled={busy} />}>
         <ul className="grid gap-2">{members.map(member => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={member.id}>
           <p className="break-all text-sm">{member.name}<br />{member.email}<br />{member.invite_pending ? 'Convite pendente' : member.is_active ? 'Ativo' : 'Desativado'}</p>
           {member.invite_pending ? <Button label="Reenviar convite" isDisabled={busy} onClick={() => void run(async () => {
@@ -118,17 +129,16 @@ export function Settings() {
               }, 'Operador atualizado.');
             }}>
               <label className="grid gap-1">Nome<input name="name" defaultValue={member.name} required maxLength={100} className={field} /></label>
-              <Button label="Salvar operador" type="submit" isDisabled={busy} />
+              <Button label="Aplicar edição" type="submit" isDisabled={busy} />
             </form>
           </details>
         </li>)}</ul>
-        <form className="grid gap-2" onSubmit={addMember}>
+        <form id="settings-operator" className="grid gap-2" onSubmit={addMember}>
           <label className="grid gap-1 text-sm">Nome<input name="name" required maxLength={100} className={field} /></label>
           <label className="grid gap-1 text-sm">E-mail<input name="email" required type="email" maxLength={150} className={field} /></label>
-          <Button type="submit" label="Enviar convite" variant="primary" isDisabled={busy} />
         </form>
-      </section>
-      <section className={card}><h3 className="text-lg font-semibold">Base de conhecimento</h3>
+      </SettingsCard>
+      <SettingsCard title="Base de conhecimento" action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy} />}>
         <p className="text-sm text-slate-600">Adicione fontes sobre a Nexus, seus serviços, aplicativos e funcionalidades.</p>
         <ul className="grid gap-2">{sources.map(source => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={source.source}>
           <p className="wrap-anywhere text-sm">{source.source} · {source.chunks} trecho(s)</p>
@@ -140,18 +150,16 @@ export function Settings() {
             }, 'Fonte removida.');
           }} />
         </li>)}</ul>
-        <form className="grid gap-2" onSubmit={importSource}>
+        <form id="settings-source" className="grid gap-2" onSubmit={importSource}>
           <label className="grid gap-1 text-sm">Nome da fonte<input name="source" required maxLength={200} className={field} /></label>
           <label className="grid gap-1 text-sm">Origem<select value={importKind} onChange={event => setImportKind(event.target.value)} className={field}><option value="texto">Texto</option><option value="arquivo">Arquivo</option><option value="url">Página web</option></select></label>
           {importKind === 'texto' && <label className="grid gap-1 text-sm">Conteúdo<textarea name="text" required maxLength={40_000} rows={4} className={field} /></label>}
           {importKind === 'url' && <label className="grid gap-1 text-sm">URL autorizada<input name="url" required type="url" maxLength={2000} className={field} /></label>}
           {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, PDF ou DOCX<input name="file" required type="file" accept=".txt,.pdf,.docx" className={field} /></label>}
-          <Button type="submit" label="Salvar fonte" variant="primary" isDisabled={busy} />
         </form>
-      </section>
-    </section>
-    <section className={card}><h3 className="text-lg font-semibold">Boas-vindas</h3>
-      <form className="grid gap-3" onSubmit={event => {
+      </SettingsCard>
+    <SettingsCard title="Boas-vindas" action={<Button type="submit" form="settings-welcome" label="Salvar boas-vindas" variant="primary" isDisabled={busy || welcome === undefined} />}>
+      <form id="settings-welcome" className="grid gap-3" onSubmit={event => {
         event.preventDefault();
         if (welcome === undefined) return;
         void run(async () => {
@@ -160,11 +168,10 @@ export function Settings() {
         }, 'Mensagem de boas-vindas salva.');
       }}>
         <TextArea label="Mensagem padrão" description="Aparece na primeira resposta automática e depois de 15 minutos sem interação. Deixe em branco para desativar o texto fixo." value={welcome ?? ''} onChange={setWelcome} maxLength={500} isDisabled={busy || welcome === undefined} />
-        <Button type="submit" label="Salvar boas-vindas" variant="primary" isDisabled={busy || welcome === undefined} />
       </form>
-    </section>
-    <section className={card}><h3 className="text-lg font-semibold">Testar a IA</h3>
-      <form className="grid gap-3" onSubmit={event => {
+    </SettingsCard>
+    <SettingsCard title="Testar a IA" action={<Button type="submit" form="settings-preview" label="Testar resposta" variant="primary" isDisabled={busy || !question.trim()} />}>
+      <form id="settings-preview" className="grid gap-3" onSubmit={event => {
         event.preventDefault();
         setPreview(undefined);
         void run(async () => {
@@ -172,13 +179,13 @@ export function Settings() {
         }, '');
       }}>
         <TextArea label="Pergunta de teste" description="Simula o início de uma conversa. Use uma pergunta sem dados pessoais." value={question} onChange={setQuestion} maxLength={4000} isDisabled={busy} />
-        <Button type="submit" label="Testar resposta" variant="primary" isDisabled={busy || !question.trim()} />
       </form>
       {preview && <section role="status" className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
         <h4 className="font-semibold">{previewLabel[preview.status]}</h4>
         <p className="whitespace-pre-wrap wrap-anywhere text-sm">{preview.message}</p>
         {preview.sources.length > 0 && <p className="wrap-anywhere text-sm text-slate-700">Fontes recuperadas: {preview.sources.join(', ')}</p>}
       </section>}
+    </SettingsCard>
     </section>
   </section>;
 }

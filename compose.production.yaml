@@ -1,0 +1,38 @@
+services:
+  postgres:
+    labels:
+      traefik.enable: "false"
+  worker:
+    labels:
+      traefik.enable: "false"
+
+  api:
+    ports: !reset []
+    networks: [default, reverse_proxy]
+    environment:
+      FORWARDED_ALLOW_IPS: ${NEXUS_DEPLOY_PROXY_IP:?}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${NEXUS_DEPLOY_NETWORK:?}
+      traefik.http.routers.nexus-atende-api.rule: Host(`atende.nexusdataanalytics.tech`) && PathPrefix(`/api/v1/`)
+      traefik.http.routers.nexus-atende-api.entrypoints: ${NEXUS_DEPLOY_ENTRYPOINT:?}
+      traefik.http.routers.nexus-atende-api.tls.certresolver: ${NEXUS_DEPLOY_RESOLVER:?}
+      traefik.http.routers.nexus-atende-api.service: nexus-atende-api
+      traefik.http.services.nexus-atende-api.loadbalancer.server.port: "8000"
+
+  web:
+    ports: !reset []
+    networks: [default, reverse_proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${NEXUS_DEPLOY_NETWORK:?}
+      traefik.http.routers.nexus-atende-web.rule: Host(`atende.nexusdataanalytics.tech`)
+      traefik.http.routers.nexus-atende-web.entrypoints: ${NEXUS_DEPLOY_ENTRYPOINT:?}
+      traefik.http.routers.nexus-atende-web.tls.certresolver: ${NEXUS_DEPLOY_RESOLVER:?}
+      traefik.http.routers.nexus-atende-web.service: nexus-atende-web
+      traefik.http.services.nexus-atende-web.loadbalancer.server.port: "3000"
+
+networks:
+  reverse_proxy:
+    external: true
+    name: ${NEXUS_DEPLOY_NETWORK:?}

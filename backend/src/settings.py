@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     public_origin: str | None = None
     openwa_base_url: str | None = None
+    openwa_allowed_urls: str = ""
     openwa_api_key: SecretStr | None = None
     openwa_webhook_tenant_id: UUID | None = None
     openwa_webhook_secret: SecretStr | None = None
@@ -34,13 +35,15 @@ class Settings(BaseSettings):
         return tenant_id, secret
 
     def openwa_endpoint(self) -> str | None:
-        if not self.openwa_base_url:
-            return None
-        base_url = self.openwa_base_url.rstrip("/")
+        return self.normalize_openwa_url(self.openwa_base_url) if self.openwa_base_url else None
+
+    @staticmethod
+    def normalize_openwa_url(value: str) -> str:
+        base_url = value.strip().rstrip("/")
         url = urlsplit(base_url)
         if (url.scheme != "https" or not url.hostname or url.username is not None
                 or url.path != "/api" or url.query or url.fragment):
-            raise ValueError("NEXUS_ATENDE_OPENWA_BASE_URL must be an HTTPS URL ending in /api")
+            raise ValueError("Informe o endereço HTTPS do OpenWA terminado em /api")
         return base_url
 
     def runtime_database_url(self) -> URL:

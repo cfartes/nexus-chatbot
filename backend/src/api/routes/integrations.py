@@ -49,7 +49,7 @@ async def resend(content: ResendSettings, actor: Writer, service: Service) -> In
 @router.put("/openwa")
 async def openwa(content: OpenWASettings, actor: Writer, service: Service) -> IntegrationsView:
     try:
-        return await service.save_openwa(actor.tenant_id, content.api_key)
+        return await service.save_openwa(actor.tenant_id, content)
     except IntegrationUnavailable:
         raise HTTPException(503, "Configure a chave de criptografia no servidor") from None
     except ValueError as error:

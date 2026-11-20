@@ -5,7 +5,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr
 
 from src.repositories.integrations import IntegrationRepository, StoredIntegrations
-from src.schemas.integrations import AISettings, IntegrationsView, ResendSettings
+from src.schemas.integrations import AISettings, IntegrationsView, OpenWASettings, ResendSettings
 from src.services.openai import OpenAIClient
 from src.services.openwa import OpenWAClient
 from src.services.resend import ResendClient
@@ -22,6 +22,9 @@ class IntegrationService:
         self._settings = settings
         self._cipher = Fernet(settings.config_key.get_secret_value()) if settings.config_key else None
         self._openwa_url = settings.openwa_endpoint()
+        self._openwa_allowed = {settings.normalize_openwa_url(value) for value in settings.openwa_allowed_urls.split(",") if value.strip()}
+        if self._openwa_url:
+            self._openwa_allowed.add(self._openwa_url)
         self._ollama_url = settings.ollama_url.rstrip("/") if settings.ollama_url else None
         if self._ollama_url:
             url = urlsplit(self._ollama_url)
@@ -54,7 +57,7 @@ class IntegrationService:
             embedding_has_key=bool(saved.embedding_key or self._settings.openai_api_key), ollama_url=self._ollama_url,
             resend_sender=saved.sender if saved.sender is not None else self._settings.resend_from or "",
             resend_recipient=saved.recipient if saved.recipient is not None else self._settings.resend_to or "",
-            resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=self._openwa_url,
+            resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=saved.openwa_url or self._openwa_url,
             openwa_webhook_url=f"{self._settings.public_origin}/api/v1/webhooks/openwa/{tenant_id}"
                 if self._settings.public_origin and self._settings.openwa_webhook_tenant_id == tenant_id else None,
             openwa_has_key=bool(saved.openwa_key or self._settings.openwa_api_key))
@@ -89,8 +92,16 @@ class IntegrationService:
         await self._repository.save(tenant_id, changes)
         return await self.view(tenant_id)
 
-    async def save_openwa(self, tenant_id: UUID, key: SecretStr) -> IntegrationsView:
-        await self._repository.save(tenant_id, {"openwa_key": self._encrypt(key)})
+    async def save_openwa(self, tenant_id: UUID, config: OpenWASettings) -> IntegrationsView:
+        saved = await self._repository.get(tenant_id)
+        current_url = saved.openwa_url or self._openwa_url
+        endpoint = self._settings.normalize_openwa_url(config.base_url) if config.base_url else current_url
+        if endpoint and endpoint not in self._openwa_allowed:
+            raise ValueError("Este endereço OpenWA ainda não foi autorizado na implantação")
+        if config.api_key:
+            await self._repository.save(tenant_id, {"openwa_url": endpoint, "openwa_key": self._encrypt(config.api_key)})
+        elif endpoint != current_url or not (saved.openwa_key or self._settings.openwa_api_key):
+            raise ValueError("Informe a chave do servidor OpenWA")
         return await self.view(tenant_id)
 
     def _ai(self, saved: StoredIntegrations) -> OpenAIClient | None:
@@ -125,8 +136,11 @@ class IntegrationService:
 
     async def openwa(self, tenant_id: UUID) -> OpenWAClient | None:
         saved = await self._repository.get(tenant_id)
+        endpoint = saved.openwa_url or self._openwa_url
+        if endpoint is None or endpoint not in self._openwa_allowed:
+            return None
         try:
-            key = self._decrypt(saved.openwa_key) or self._settings.openwa_api_key
+            key = self._decrypt(saved.openwa_key) or (self._settings.openwa_api_key if endpoint == self._openwa_url else None)
         except IntegrationUnavailable:
             return None
-        return OpenWAClient(self._openwa_url, key) if self._openwa_url and key else None
+        return OpenWAClient(endpoint, key) if key else None

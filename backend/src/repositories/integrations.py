@@ -19,6 +19,7 @@ class StoredIntegrations(BaseModel):
     sender: str | None = None
     recipient: str | None = None
     openwa_key: str | None = None
+    openwa_url: str | None = None
 
 
 class IntegrationRepository:

@@ -13,6 +13,10 @@ class WhatsAppQR(BaseModel):
     qr_code: str | None = None
 
 
+class WhatsAppPhone(BaseModel):
+    phone_number: str = Field(min_length=1, max_length=32)
+
+
 class OpenWASession(BaseModel):
     status: str = Field(min_length=1, max_length=32)
 

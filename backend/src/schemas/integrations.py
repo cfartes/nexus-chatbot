@@ -20,7 +20,8 @@ class ResendSettings(BaseModel):
 
 
 class OpenWASettings(BaseModel):
-    api_key: SecretStr = Field(min_length=1, max_length=1000)
+    base_url: str | None = Field(default=None, min_length=1, max_length=300, pattern=r"^[^\s\x00]+$")
+    api_key: SecretStr | None = Field(default=None, min_length=1, max_length=1000)
 
 
 class IntegrationsView(BaseModel):

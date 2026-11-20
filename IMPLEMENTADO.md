@@ -58,7 +58,9 @@ Configure `NEXUS_ATENDE_CONFIG_KEY` com uma chave Fernet gerada pelo backend e p
 
 Para Resend, salve a chave, o remetente verificado e, se desejar alertas de fila, o e-mail da equipe. Convites usam o remetente verificado e o destinatário de cada operador. A opção **Reenviar convite** gera um novo link quando o anterior expira ou o envio falha.
 
-Para OpenWA, salve a chave no painel e consulte a sessão, o status e o QR Code na área WhatsApp. O endereço OpenWA, a sessão dedicada e o segredo do webhook são provisionados no servidor para limitar o acesso na VPS compartilhada. As credenciais de ambiente continuam disponíveis como configuração inicial.
+Para OpenWA, salve o endereço HTTPS terminado em `/api` e a chave no painel. O ambiente autoriza o endereço padrão em `NEXUS_ATENDE_OPENWA_BASE_URL` e endereços adicionais em `NEXUS_ATENDE_OPENWA_ALLOWED_URLS`, separados por vírgula. Ao trocar de servidor, informe a chave correspondente. A sessão dedicada e o segredo do webhook são provisionados no servidor. Consulte a sessão, o status e o QR Code na área WhatsApp.
+
+Em **Configurações → WhatsApp**, informe o número da empresa com DDI e DDD. O painel salva o número em formato internacional mesmo antes do pareamento. A operação usa `PUT /api/v1/whatsapp/connection/phone` e exige administrador.
 
 Em **Configurações → Boas-vindas**, o administrador define o texto que abre a primeira resposta automática e uma nova sessão após 15 minutos sem interação. A saudação também acompanha o primeiro encaminhamento automático para a fila humana. Para o acervo da Nexus, cadastre fontes distintas por serviço ou aplicativo. A importação web lê uma página por URL da origem HTTPS configurada.
 
@@ -119,3 +121,24 @@ Para validar o painel, rode `corepack pnpm lint`, `corepack pnpm build` e `corep
 Para executar o painel em modo produção local, depois de preparar o banco, configure `NEXUS_ATENDE_PUBLIC_ORIGIN=http://127.0.0.1:3001` e rode `docker compose --profile web up -d --build --wait web`. O painel ficará em `http://127.0.0.1:3001` e encaminhará `/api/v1` à API na rede interna do Compose. O perfil `app` permanece disponível para executar o worker.
 
 Na hospedagem, aponte o proxy HTTPS para o painel e configure `NEXUS_ATENDE_PUBLIC_ORIGIN` com a origem pública. Preserve o cabeçalho `Origin`, permita requisições SSE sem buffering e configure apenas proxies confiáveis em `NEXUS_ATENDE_TRUSTED_PROXY_IPS`.
+
+## Instalar na VPS
+
+O instalador usa o Traefik existente com provider Docker, uma rede bridge compartilhada, um entrypoint HTTPS e um resolver ACME. Requer Python 3.9+, Git, Docker e Compose v2 com suporte a `!reset`. Aponte o DNS de `atende.nexusdataanalytics.tech` para a VPS antes de executar.
+
+```sh
+git clone --branch main https://github.com/cfartes/nexus-chatbot.git /opt/nexus-atende
+cd /opt/nexus-atende
+python3 scripts/install_vps.py \
+  --traefik-container CONTAINER_TRAEFIK \
+  --network REDE_TRAEFIK \
+  --entrypoint ENTRYPOINT_HTTPS \
+  --resolver RESOLVER_ACME \
+  --admin-email EMAIL_DO_ADMINISTRADOR
+```
+
+Use os nomes da instalação existente do Traefik. Na primeira execução, `--openwa-url URL_HTTPS_TERMINADA_EM_API` permite autorizar o endereço do gateway. Os números de telefone, a sessão dedicada e as credenciais dos provedores são configurados separadamente.
+
+O projeto Docker `nexus-atende-prod` instala banco, API, painel e worker. O Traefik roteia o painel e `/api/v1/` no mesmo domínio, sem portas do aplicativo publicadas no host. O instalador gera os segredos em `.env.production` e grava o primeiro acesso em `.deploy/primeiro-acesso.txt`. Consulte os dados privadamente na VPS. Preserve a chave de criptografia e os demais segredos ao atualizar.
+
+Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.deploy/` antes das migrações e pode reiniciar os serviços do Nexus Atende. Ele valida página e API por HTTPS ao final. `--skip-public-check` limita a validação à saúde interna, útil enquanto o DNS ou o certificado estiver pendente.

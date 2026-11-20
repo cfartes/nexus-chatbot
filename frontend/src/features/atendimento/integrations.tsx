@@ -3,6 +3,7 @@
 import { Button } from '@astryxdesign/core/Button';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage } from './api';
+import { SettingsCard, settingsGrid } from './settings-card';
 
 const models = { openai: 'gpt-4o-mini', gemini: 'gemini-2.5-flash', anthropic: 'claude-sonnet-4-6', ollama: 'qwen3:4b' };
 type Provider = keyof typeof models;
@@ -13,7 +14,6 @@ interface IntegrationView {
 }
 
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
-const card = 'grid content-start gap-3 rounded-2xl border border-slate-200 bg-white p-5';
 
 export function Integrations({ refreshConnection }: { refreshConnection: () => Promise<void> }) {
   const [config, setConfig] = useState<IntegrationView>();
@@ -50,9 +50,9 @@ export function Integrations({ refreshConnection }: { refreshConnection: () => P
     <h3 className="text-xl font-semibold">Integrações</h3>
     {status && <p role="status" className="text-sm text-teal-800">{status}</p>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
-    {config ? <section className="grid gap-4 lg:grid-cols-3">
-      <form className={card} onSubmit={event => void save(event, 'ai')}>
-        <h4 className="text-lg font-semibold">Inteligência artificial</h4>
+    {config ? <section className={settingsGrid}>
+      <SettingsCard title="Inteligência artificial" action={<Button type="submit" form="settings-ai" label="Salvar IA" variant="primary" isDisabled={busy} />}>
+      <form id="settings-ai" className="grid gap-3" onSubmit={event => void save(event, 'ai')}>
         <label className="grid gap-1 text-sm">Provedor<select className={field} name="provider" value={provider} onChange={event => {
           const selected = event.target.value as Provider;
           setProvider(selected); setModel(selected === config.provider ? config.model : models[selected]);
@@ -62,24 +62,24 @@ export function Integrations({ refreshConnection }: { refreshConnection: () => P
         {provider === 'anthropic' && <label className="grid gap-1 text-sm">Chave OpenAI para embeddings<input className={field} name="embedding_key" type="password" autoComplete="new-password" maxLength={1000} placeholder={config.embedding_has_key ? 'Chave disponível' : 'Informe a chave'} /></label>}
         {provider === 'ollama' && <><p className="wrap-anywhere text-sm">Servidor local: {config.ollama_url ?? 'Ainda não configurado'}</p><label className="grid gap-1 text-sm">Modelo de embeddings<input className={field} name="embedding_model" defaultValue={config.embedding_model} required maxLength={120} /></label></>}
         <p className="text-sm text-slate-600">Se o modelo de embeddings mudar, reimporte as fontes para usar a nova indexação.</p>
-        <Button type="submit" label="Salvar IA" variant="primary" isDisabled={busy} />
       </form>
-      <form className={card} onSubmit={event => void save(event, 'resend')}>
-        <h4 className="text-lg font-semibold">Resend</h4>
+      </SettingsCard>
+      <SettingsCard title="Resend" action={<Button type="submit" form="settings-resend" label="Salvar Resend" variant="primary" isDisabled={busy} />}>
+      <form id="settings-resend" className="grid gap-3" onSubmit={event => void save(event, 'resend')}>
         <label className="grid gap-1 text-sm">Chave Resend<input className={field} name="api_key" type="password" autoComplete="new-password" maxLength={1000} placeholder={config.resend_has_key ? 'Chave salva' : 'Informe a chave'} /></label>
         <label className="grid gap-1 text-sm">Remetente verificado<input className={field} name="sender" defaultValue={config.resend_sender} required maxLength={200} /></label>
         <label className="grid gap-1 text-sm">E-mail da equipe para alertas<input className={field} name="recipient" type="email" defaultValue={config.resend_recipient} maxLength={150} /></label>
         <p className="text-sm text-slate-600">O remetente envia convites. O e-mail da equipe recebe alertas de transbordo.</p>
-        <Button type="submit" label="Salvar Resend" variant="primary" isDisabled={busy} />
       </form>
-      <form className={card} onSubmit={event => void save(event, 'openwa')}>
-        <h4 className="text-lg font-semibold">OpenWA</h4>
-        <p className="wrap-anywhere text-sm">Servidor: {config.openwa_url ?? 'Ainda não configurado'}</p>
+      </SettingsCard>
+      <SettingsCard title="OpenWA" action={<Button type="submit" form="settings-openwa" label="Salvar OpenWA" variant="primary" isDisabled={busy} />}>
+      <form id="settings-openwa" className="grid gap-3" onSubmit={event => void save(event, 'openwa')}>
+        <label className="grid gap-1 text-sm">Endereço do servidor<input key={config.openwa_url ?? ''} className={field} name="base_url" type="url" required maxLength={300} defaultValue={config.openwa_url ?? ''} placeholder="https://openwa.exemplo.com/api" /></label>
         <p className="wrap-anywhere text-sm">Webhook: {config.openwa_webhook_url ?? 'Ainda não configurado'}</p>
-        <label className="grid gap-1 text-sm">Chave OpenWA<input className={field} name="api_key" type="password" required autoComplete="new-password" maxLength={1000} placeholder={config.openwa_has_key ? 'Chave salva' : 'Informe a chave'} /></label>
-        <p className="text-sm text-slate-600">A sessão e o servidor são vinculados na implantação. Consulte o status e o QR Code em WhatsApp.</p>
-        <Button type="submit" label="Salvar OpenWA" variant="primary" isDisabled={busy} />
+        <label className="grid gap-1 text-sm">Chave OpenWA<input className={field} name="api_key" type="password" autoComplete="new-password" maxLength={1000} placeholder={config.openwa_has_key ? 'Chave salva' : 'Informe a chave'} /></label>
+        <p className="text-sm text-slate-600">Use um endereço HTTPS autorizado terminado em /api. Ao trocar de servidor, informe a chave dele. Consulte o status e o QR Code em WhatsApp.</p>
       </form>
+      </SettingsCard>
     </section> : !error && <p>Carregando integrações…</p>}
   </section>;
 }

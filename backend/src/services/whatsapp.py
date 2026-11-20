@@ -1,3 +1,4 @@
+from re import fullmatch, sub
 from uuid import UUID
 
 from src.repositories.tenants import TenantRepository
@@ -13,10 +14,18 @@ class WhatsAppService:
         self._tenants = tenants
         self._integrations = integrations
 
+    async def update_phone(self, tenant_id: UUID, value: str) -> str:
+        digits = sub(r"[ ().-]", "", value).removeprefix("+")
+        if not fullmatch(r"[1-9][0-9]{7,14}", digits):
+            raise ValueError("Informe um telefone com DDI e DDD, como +55 11 99999-9999")
+        phone = f"+{digits}"
+        await self._tenants.update_phone(tenant_id, phone)
+        return phone
+
     async def connection(self, tenant_id: UUID) -> WhatsAppConnection:
         tenant = await self._tenants.get_connection(tenant_id)
         if tenant is None or tenant.openwa_session_id is None:
-            return WhatsAppConnection(status="NOT_CONFIGURED")
+            return WhatsAppConnection(status="NOT_CONFIGURED", phone_number=tenant.phone_number if tenant else None)
         client = await self._integrations.openwa(tenant_id)
         status = await client.session_status(tenant.openwa_session_id) if client else "NOT_CONFIGURED"
         return WhatsAppConnection(
