@@ -6,3 +6,7 @@
 @import "@astryxdesign/theme-neutral/theme.css";
 @import "@astryxdesign/core/tailwind-theme.css";
 @import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  --color-nexus-petroleo: #254653;
+}

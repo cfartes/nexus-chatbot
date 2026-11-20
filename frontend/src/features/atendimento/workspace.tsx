@@ -99,7 +99,7 @@ export function Workspace() {
   if (!operator) return <><Login onLogin={actor => { setError(''); setOperator(actor); }} />{error && <p role="alert" className="p-4 text-center text-red-700">{error}</p>}</>;
   const active = rows.find(row => row.id === selected);
   return <main className="min-h-dvh bg-slate-100 text-slate-900">
-    <header className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 px-5 py-4 text-white">
+    <header className="flex flex-wrap items-center justify-between gap-3 bg-nexus-petroleo px-5 py-4 text-white">
       <h1><Image src={logo} alt="Nexus Atende" className="h-auto w-32 rounded-md" unoptimized /></h1>
       <nav aria-label="Área de trabalho" className="flex flex-wrap items-center gap-4 text-sm">
         {operator.role === 'admin' && <><button className="underline" onClick={() => setSettings(false)}>Atendimento</button><button className="underline" onClick={() => setSettings(true)}>Configurações</button></>}
