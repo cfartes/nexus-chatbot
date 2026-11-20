@@ -28,7 +28,7 @@ class OperatorService:
         resend, origin = await self.invitation_sender(tenant_id)
         token = f"{tenant_id}.{token_urlsafe(32)}"
         invite_hash = sha256(token.encode()).hexdigest()
-        member = await self._repository.create(tenant_id, name, operator.email.lower(), invite_hash)
+        member = await self._repository.create(tenant_id, operator.model_copy(update={"name": name, "email": operator.email.lower()}), invite_hash)
         if member:
             await self._send_invitation(member, resend, f"{origin}/convite#{token}", invite_hash)
         return member
@@ -81,4 +81,9 @@ class OperatorService:
         name = operator.name.strip()
         if not name:
             raise ValueError("Informe o nome")
-        return await self._repository.update(tenant_id, user_id, name, operator.is_active)
+        return await self._repository.update(tenant_id, user_id, operator.model_copy(
+            update={"name": name, "email": operator.email.lower() if operator.email else None},
+        ))
+
+    async def delete(self, tenant_id: UUID, user_id: UUID) -> bool:
+        return await self._repository.update(tenant_id, user_id, None) is not None

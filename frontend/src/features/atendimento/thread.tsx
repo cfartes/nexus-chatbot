@@ -2,7 +2,7 @@
 
 import { Button } from '@astryxdesign/core/Button';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { api, errorMessage, type Conversation, type Message, type Operator } from './api';
+import { api, departmentLabels, errorMessage, type Conversation, type Message, type Operator } from './api';
 
 const delivery: Record<string, string> = { pending: 'Na fila', processing: 'Enviando', sent: 'Aceita pelo WhatsApp', failed: 'Falha no envio', uncertain: 'Envio incerto', cancelled: 'Cancelada' };
 const authors = { customer: 'Cliente', operator: 'Atendente', bot: 'IA' };
@@ -85,7 +85,8 @@ export function Thread({ conversation, operator, revision, onChange, onClaim }: 
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
       <section><h2 className="break-all text-lg font-semibold">{conversation.customer_name || conversation.chat_id.split('@')[0]}</h2>
         <p className="text-sm text-slate-600">{{ waiting: 'Na fila humana', bot: 'Atendimento com IA', assigned: owner ? 'Atribuída a você' : 'Atribuída a outro atendente' }[conversation.state]}</p>
-        {conversation.origin_name && <p className="text-sm text-slate-600">Origem · {conversation.origin_name}</p>}</section>
+        {conversation.origin_name && <p className="text-sm text-slate-600">Origem · {conversation.origin_name}</p>}
+        {conversation.department && <p className="text-sm text-slate-600">Perfil · {departmentLabels[conversation.department]}</p>}</section>
       <section className="flex flex-wrap items-center gap-2" aria-label="Ações da conversa">
         {conversation.state === 'waiting' && <Button label="Assumir" variant="primary" isDisabled={busy} onClick={() => void run(async () => { await mutate('/claim'); onClaim(); })} />}
         {(admin || owner) &&

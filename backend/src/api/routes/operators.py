@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy.exc import IntegrityError
 
 from src.api.routes.auth import administrator, administrator_mutation, check_origin
 from src.schemas.auth import Operator
@@ -64,8 +65,18 @@ async def accept(content: AcceptInvite, request: Request, service: Service) -> R
 async def update(user_id: UUID, operator: OperatorUpdate, actor: Writer, service: Service) -> OperatorRecord:
     try:
         updated = await service.update(actor.tenant_id, user_id, operator)
+    except IntegrityError as error:
+        if getattr(error.orig, "sqlstate", None) == "23505":
+            raise HTTPException(409, "E-mail indisponível") from None
+        raise
     except ValueError:
         raise HTTPException(422, "Informe o nome") from None
     if updated is None:
         raise HTTPException(404, "Operador indisponível")
     return updated
+
+
+@router.delete("/{user_id}", status_code=204)
+async def delete(user_id: UUID, actor: Writer, service: Service) -> None:
+    if not await service.delete(actor.tenant_id, user_id):
+        raise HTTPException(404, "Atendente indisponível")

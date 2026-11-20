@@ -6,6 +6,7 @@ from uuid import UUID
 from src.repositories.bot import BotRepository
 from src.repositories.knowledge import KnowledgeRepository
 from src.schemas.knowledge import BotContext, OpeningUpdate, PreviewResult
+from src.schemas.operators import Department
 from src.schemas.work import WorkItem
 from src.services.integrations import IntegrationService
 
@@ -13,6 +14,12 @@ FALLBACK = "Vou encaminhar sua conversa para a equipe da Nexus. Um atendente con
 TECHNICAL = "Estou com uma dificuldade técnica no momento. Vou chamar a equipe da Nexus para continuar o atendimento."
 ASK_NAME = "Como posso chamar você?"
 ASK_SUBJECT = "Como posso ajudar?"
+DEPARTMENTS: tuple[tuple[Department, str], ...] = (
+    ("comercial", "Comercial"), ("financeiro", "Financeiro"), ("suporte", "Suporte"), ("sac", "SAC"),
+)
+DEPARTMENT_MENU = "Qual é o assunto do atendimento? Responda com o número da opção:\n\n" + "\n".join(
+    f"{number}. {label}" for number, (_, label) in enumerate(DEPARTMENTS, 1)
+)
 logger = logging.getLogger(__name__)
 
 
@@ -46,11 +53,16 @@ class BotService:
             opening = OpeningUpdate(origin_slug=context.origin_slug)
             if _generic(question):
                 question = ""
-            if not context.name:
+            if not context.name and not _human_requested(question):
                 opening.pending_question = question
                 await self._repository.resolve(tenant_id, work, _prefixed(prefix, ASK_NAME), TECHNICAL, None, opening)
                 return
         elif context.opening_question is not None:
+            if _human_requested(question):
+                opening = OpeningUpdate(origin_slug=context.origin_slug)
+                await self._repository.resolve(tenant_id, work, DEPARTMENT_MENU, TECHNICAL, None,
+                                               opening, ask_department=True)
+                return
             name = _customer_name(question)
             if name is None:
                 if not context.opening_question and not _generic(question):
@@ -62,6 +74,19 @@ class BotService:
             prefix = f"Prazer, {name}!"
             question = context.opening_question
 
+        if context.awaiting_department:
+            choice = fullmatch(r"([1-4])[.)]?", question)
+            if choice:
+                department, label = DEPARTMENTS[int(choice[1]) - 1]
+                await self._repository.resolve(tenant_id, work, None, f"Vou encaminhar sua conversa para {label}.", None,
+                                               opening, department=department)
+            else:
+                await self._repository.resolve(tenant_id, work, DEPARTMENT_MENU, TECHNICAL, None, opening)
+            return
+        if _human_requested(question):
+            await self._repository.resolve(tenant_id, work, _prefixed(prefix, DEPARTMENT_MENU), TECHNICAL, None,
+                                           opening, ask_department=True)
+            return
         if not question or (not context.recent and _generic(question)):
             await self._repository.resolve(tenant_id, work, _prefixed(prefix, ASK_SUBJECT), TECHNICAL, None, opening)
             return
@@ -82,9 +107,8 @@ class BotService:
     async def _answer(self, tenant_id: UUID, context: BotContext) -> tuple[PreviewResult, str | None]:
         welcome = f"{context.welcome_message}\n\n" if not context.recent and context.welcome_message else ""
         fallback = welcome + FALLBACK
-        normalized = _normalized(context.question)
-        if search(r"^(um |uma )?(atendente|operador)[!. ]*$|\b(quero (um |uma )?(atendente|operador|atendimento humano)|falar com (um atendente|uma pessoa|o suporte|suporte))\b", normalized):
-            return PreviewResult(status="handoff", message=fallback, sources=[]), None
+        if _human_requested(context.question):
+            return PreviewResult(status="handoff", message=welcome + DEPARTMENT_MENU, sources=[]), None
         client = await self._integrations.ai(tenant_id)
         if client is None:
             return PreviewResult(status="unavailable", message="A IA está indisponível. Confira o provedor e as credenciais.", sources=[]), None
@@ -121,6 +145,13 @@ class BotService:
 
 def _normalized(value: str) -> str:
     return normalize("NFKD", value.casefold()).encode("ascii", "ignore").decode()
+
+
+def _human_requested(value: str) -> bool:
+    return bool(search(
+        r"^(um |uma )?(atendente|operador|atendimento humano)[!. ]*$|\b(quero (um |uma )?(atendente|operador|atendimento humano)|falar com (um |uma |o |a )?(atendente|operador|pessoa|humano|suporte|comercial|financeiro|sac))\b",
+        _normalized(value),
+    ))
 
 
 def _generic(value: str) -> bool:

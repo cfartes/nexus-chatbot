@@ -26,7 +26,7 @@ class ConversationRepository:
             result = await connection.execute(text("""
                 SELECT conversations.id, customers.chat_id, customers.name AS customer_name,
                     conversations.state, conversations.assigned_user_id, conversations.last_interaction,
-                    origins.name AS origin_name
+                    origins.name AS origin_name, conversations.department
                 FROM nexus_atende.conversations AS conversations
                 JOIN nexus_atende.customers AS customers
                     ON (customers.tenant_id, customers.id) = (conversations.tenant_id, conversations.customer_id)
@@ -34,11 +34,15 @@ class ConversationRepository:
                     ON (origins.tenant_id, origins.slug) = (conversations.tenant_id, conversations.origin_slug)
                 WHERE conversations.tenant_id = :tenant_id AND conversations.state = :state
                     AND (NOT :mine OR conversations.assigned_user_id = :actor_id)
+                    AND (:admin OR conversations.state <> 'waiting' OR conversations.department IS NULL OR EXISTS (
+                        SELECT 1 FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :actor_id
+                            AND department = conversations.department
+                    ))
                 ORDER BY (conversations.id = :focus) DESC NULLS LAST, conversations.last_interaction DESC, conversations.id DESC
                 LIMIT :limit OFFSET :offset
             """), {
                 "tenant_id": actor.tenant_id, "state": state, "mine": queue == "mine",
-                "actor_id": actor.id, "limit": limit, "offset": offset, "focus": focus,
+                "actor_id": actor.id, "limit": limit, "offset": offset, "focus": focus, "admin": actor.role == "admin",
             })
             return [ConversationSummary.model_validate(row) for row in result.mappings()]
 
@@ -50,6 +54,10 @@ class ConversationRepository:
                 SELECT id FROM nexus_atende.conversations
                 WHERE tenant_id = :tenant_id AND id = :conversation_id
                     AND (:admin OR state <> 'assigned' OR assigned_user_id = :actor_id)
+                    AND (:admin OR state <> 'waiting' OR department IS NULL OR EXISTS (
+                        SELECT 1 FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :actor_id
+                            AND users.department = conversations.department
+                    ))
                 FOR SHARE
             """), {
                 "tenant_id": actor.tenant_id, "conversation_id": conversation_id,
@@ -76,16 +84,18 @@ class ConversationRepository:
 
     async def claim(self, actor: Operator, conversation_id: UUID) -> bool:
         async with tenant_transaction(self._engine, actor.tenant_id) as connection:
-            active = await connection.scalar(text("""
-                SELECT id FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :id AND is_active FOR SHARE
+            department = await connection.scalar(text("""
+                SELECT department FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :id AND is_active FOR SHARE
             """), {"tenant_id": actor.tenant_id, "id": actor.id})
-            if active is None:
+            if department is None:
                 return False
             claimed = await connection.scalar(text("""
                 UPDATE nexus_atende.conversations SET state = 'assigned', assigned_user_id = :actor_id
                 WHERE tenant_id = :tenant_id AND id = :conversation_id AND state = 'waiting'
+                    AND (:admin OR department IS NULL OR department = :department)
                 RETURNING id
-            """), {"tenant_id": actor.tenant_id, "conversation_id": conversation_id, "actor_id": actor.id})
+            """), {"tenant_id": actor.tenant_id, "conversation_id": conversation_id, "actor_id": actor.id,
+                    "admin": actor.role == "admin", "department": department})
             return claimed is not None
 
     async def close(self, actor: Operator, conversation_id: UUID) -> bool:
@@ -109,7 +119,7 @@ class ConversationRepository:
             await connection.execute(text("""
                 UPDATE nexus_atende.conversations
                 SET state = 'closed', assigned_user_id = NULL, opening_pending = true,
-                    opening_question = NULL, origin_slug = NULL
+                    opening_question = NULL, origin_slug = NULL, department = NULL, awaiting_department = false
                 WHERE tenant_id = :tenant_id AND id = :id
             """), values)
             await connection.execute(text("""

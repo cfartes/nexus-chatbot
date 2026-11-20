@@ -90,6 +90,10 @@ O administrador de cada empresa define o destinatário em **Avisos de atendiment
 
 Administradores e atendentes responsáveis podem transferir conversas atribuídas. O destinatário recebe um e-mail individual pelo Resend e um aviso no painel que permanece até ser fechado ou até abrir a conversa. Para exibir também a notificação do sistema, use **Ativar notificações do sistema** no painel e conceda a permissão solicitada pelo navegador.
 
+Em **Configurações → Atendentes**, use **Novo atendente** ou **Editar** para abrir o cadastro em uma janela modal. Cada atendente tem perfil Comercial, Financeiro, Suporte ou SAC. Quando o cliente pede atendimento humano, o bot mostra um menu numerado e encaminha à fila do perfil escolhido. O administrador vê todas as filas. A exclusão remove o atendente da lista, bloqueia o acesso e devolve as conversas atribuídas à fila.
+
+O cadastro de **Clientes** do SuperAdmin usa janelas modais para inclusão e edição. Registra nome, CPF ou CNPJ, endereço completo, telefone e e-mail de contato. A exclusão arquiva o cliente e preserva o histórico. Cadastros anteriores podem ser completados na edição.
+
 O teste da IA distingue uma pergunta sem cobertura de uma base vazia, vetores incompatíveis e erros do provedor. Se as fontes foram importadas com outro modelo de embeddings, reimporte-as para tornar o conteúdo disponível no modelo atual.
 
 ## Executar a migração local

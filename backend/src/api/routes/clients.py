@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from src.api.routes.auth import superadministrator, superadministrator_mutation
 from src.repositories.tenants import ClientConflict
 from src.schemas.auth import Operator
-from src.schemas.tenants import ClientCreate, ClientInvite, ClientName, ClientRecord
+from src.schemas.tenants import ClientCreate, ClientInvite, ClientRecord, ClientUpdate
 from src.services.clients import ClientService
 from src.services.integrations import IntegrationUnavailable
 
@@ -52,7 +52,7 @@ async def renew_admin(tenant_id: UUID, _actor: Writer, service: Service) -> Clie
 
 
 @router.put("/{tenant_id}", status_code=204)
-async def update_client(tenant_id: UUID, content: ClientName, _actor: Writer, service: Service) -> None:
+async def update_client(tenant_id: UUID, content: ClientUpdate, _actor: Writer, service: Service) -> None:
     await _update(tenant_id, content, service)
 
 
@@ -63,7 +63,7 @@ async def archive_client(tenant_id: UUID, actor: Writer, service: Service) -> No
     await _update(tenant_id, None, service)
 
 
-async def _update(tenant_id: UUID, content: ClientName | None, service: Service) -> None:
+async def _update(tenant_id: UUID, content: ClientUpdate | None, service: Service) -> None:
     try:
         await service.update(tenant_id, content)
     except LookupError:

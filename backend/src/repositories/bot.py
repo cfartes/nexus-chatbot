@@ -7,12 +7,13 @@ from src.repositories.database import tenant_transaction
 from src.repositories.work import enqueue, finish
 from src.schemas.auth import Operator
 from src.schemas.knowledge import BotContext, OpeningUpdate
+from src.schemas.operators import Department
 from src.schemas.work import WorkItem
 
 
 async def _handoff(connection: AsyncConnection, tenant_id: UUID, conversation_id: UUID) -> None:
     await connection.execute(text("""
-        UPDATE nexus_atende.conversations SET state = 'waiting', assigned_user_id = NULL
+        UPDATE nexus_atende.conversations SET state = 'waiting', assigned_user_id = NULL, awaiting_department = false
         WHERE tenant_id = :tenant_id AND id = :id
     """), {"tenant_id": tenant_id, "id": conversation_id})
     await enqueue(connection, tenant_id, conversation_id, "notify")
@@ -27,7 +28,7 @@ class BotRepository:
             values = {"tenant_id": tenant_id, "id": work.conversation_id, "message_id": work.message_id}
             info = await connection.execute(text("""
                 SELECT messages.content, customers.name, customers.previous_summary, tenants.welcome_message,
-                    conversations.opening_pending, conversations.opening_question, conversations.origin_slug,
+                    conversations.opening_pending, conversations.opening_question, conversations.origin_slug, conversations.awaiting_department,
                     origins.name AS origin_name,
                     extract(hour FROM messages.created_at AT TIME ZONE 'America/Sao_Paulo')::int AS local_hour
                 FROM nexus_atende.messages AS messages
@@ -62,10 +63,12 @@ class BotRepository:
             return BotContext(question=row.content, name=row.name, previous_summary=row.previous_summary, welcome_message=row.welcome_message,
                               recent=recent, previous=[] if recent else [entry.line for entry in entries],
                               opening_pending=row.opening_pending, opening_question=row.opening_question,
-                              origin_slug=row.origin_slug, origin_name=row.origin_name, local_hour=row.local_hour)
+                              origin_slug=row.origin_slug, origin_name=row.origin_name, local_hour=row.local_hour,
+                              awaiting_department=row.awaiting_department)
 
     async def resolve(self, tenant_id: UUID, work: WorkItem, answer: str | None, fallback: str, summary: str | None,
-                      opening: OpeningUpdate | None = None) -> None:
+                      opening: OpeningUpdate | None = None, *, ask_department: bool = False,
+                      department: Department | None = None) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             values = {"tenant_id": tenant_id, "id": work.conversation_id}
             state = await connection.scalar(text("""
@@ -80,6 +83,11 @@ class BotRepository:
             if state != "bot":
                 await finish(connection, tenant_id, work.id, "cancelled")
                 return
+            if ask_department or department is not None:
+                await connection.execute(text("""
+                    UPDATE nexus_atende.conversations SET department = :department, awaiting_department = :asking
+                    WHERE tenant_id = :tenant_id AND id = :id
+                """), {**values, "department": department, "asking": ask_department})
             if opening is not None:
                 await connection.execute(text("""
                     UPDATE nexus_atende.conversations
@@ -121,7 +129,8 @@ class BotRepository:
                 return False
             if active and row.state != "bot":
                 await connection.execute(text("""
-                    UPDATE nexus_atende.conversations SET state = 'bot', assigned_user_id = NULL
+                    UPDATE nexus_atende.conversations SET state = 'bot', assigned_user_id = NULL,
+                        department = NULL, awaiting_department = false
                     WHERE tenant_id = :tenant_id AND id = :id
                 """), values)
             elif not active and row.state == "bot":

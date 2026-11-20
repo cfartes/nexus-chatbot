@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from src.schemas.work import WorkStatus
+from src.schemas.operators import Department
 
 Queue = Literal["waiting", "bot", "mine", "assigned"]
 
@@ -17,6 +18,7 @@ class ConversationSummary(BaseModel):
     assigned_user_id: UUID | None
     last_interaction: datetime
     origin_name: str | None = None
+    department: Department | None = None
 
 
 class HistoryMessage(BaseModel):

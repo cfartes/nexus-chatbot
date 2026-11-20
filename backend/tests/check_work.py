@@ -123,7 +123,8 @@ async def check() -> None:
                         break
 
             for message_id, content in (("work-ai", "Qual é o expediente?"), ("work-name", "Meu nome é Ana Souza"),
-                                        ("work-human", "Quero falar com um atendente")):
+                                        ("work-human", "Quero falar com um atendente"), ("work-invalid-category", "9"),
+                                        ("work-category", "3")):
                 await receive(message_id, content)
                 with (patch("src.services.openwa.request_json", side_effect=lambda *_args: {"data": {"messageId": str(uuid4())}}) as whatsapp,
                       patch("src.services.resend.request_json", return_value={"id": "email-id"}) as resend,
@@ -138,6 +139,10 @@ async def check() -> None:
                         assert whatsapp.call_count == 1 and ai.call_count == 2 and resend.call_count == 0
                         assert whatsapp.call_args.args[2]["text"] == "Prazer, Ana Souza!\n\nAtendemos em horário comercial."
                         assert "Qual é o expediente?" in str(ai.call_args.args[2])
+                        continue
+                    elif message_id in {"work-human", "work-invalid-category"}:
+                        assert whatsapp.call_count == 1 and ai.call_count == 0 and resend.call_count == 0
+                        assert "1. Comercial\n2. Financeiro\n3. Suporte\n4. SAC" in whatsapp.call_args.args[2]["text"]
                         continue
                     else:
                         assert whatsapp.call_count == 1 and ai.call_count == 0 and resend.call_count == 1
@@ -154,6 +159,14 @@ async def check() -> None:
             assert status == 200 and json.loads(body)[0]["chat_id"] == "5511888888888@c.us"
             assert json.loads(body)[0]["customer_name"] == "Ana Souza"
             bot_id = json.loads(body)[0]["id"]
+            assert json.loads(body)[0]["department"] == "suporte"
+            assert json.loads((await call("conversations", "GET", "", admin_only=False))[1]) == []
+            assert (await call("conversations", "POST", f"{bot_id}/claim", admin_only=False))[0] == 409
+            second_id = next(user["id"] for user in target if user["name"] == "Segundo")
+            assert (await call("operators", "PUT", second_id, {"name": "Segundo", "is_active": True, "department": "suporte"}))[0] == 200
+            _, support = await login(b"SECOND@EXAMPLE.TEST")
+            support_queue = (await request("GET", "", headers=support, prefix="conversations"))[2]
+            assert json.loads(support_queue)[0]["id"] == bot_id
             async with EventRepository(engine).listen(TENANT) as changed:
                 assert (await call("conversations", "PUT", f"{bot_id}/bot", {"active": True}))[0] == 204
                 await asyncio.wait_for(changed.wait(), timeout=2)
@@ -352,13 +365,17 @@ async def check() -> None:
                 assert await connection.scalar(text("SELECT openwa_number_verified FROM nexus_atende.tenants")) is False
 
             assert (await request("GET", "", headers=third, prefix="clients"))[0] == 403
-            client_data = {"name": "Cliente Piloto", "admin": {"name": "Admin Piloto", "email": "pilot@example.test"}}
+            details = {"address": "Rua Teste, 123", "document": "12.345.678/0001-95",
+                       "contact_phone": "+5511999990001", "contact_email": "contact@example.test"}
+            client_data = {"name": "Cliente Piloto", "details": details, "admin": {"name": "Admin Piloto", "email": "pilot@example.test"}}
             with patch("src.services.resend.request_json", return_value={"id": "client-invite"}) as email:
                 status, created_client = await call("clients", "POST", "", client_data)
             assert status == 201, created_client
             assert email.call_args.args[2]["to"] == ["pilot@example.test"]
             assert email.call_args.args[2]["from"] == "from@example.test"
             client_id = json.loads(created_client)["id"]
+            assert json.loads(created_client)["details"]["document"] == "12345678000195"
+            assert b"contact@example.test" not in (await request("GET", "companies"))[2]
             token = email.call_args.args[2]["text"].split("#")[-1]
             assert (await call("operators", "POST", "accept-invite", {"token": token, "password": "test-password-123"}))[0] == 204
             origin_header = next(header for header in admin if header[0] == b"origin")
@@ -408,13 +425,14 @@ async def check() -> None:
             status, _, platform = await request("POST", "login", ar, (origin_header,))
             assert status == 200 and json.loads(platform)["platform_admin"] is True
             assert (await call("clients", "DELETE", str(TENANT)))[0] == 422
-            assert (await call("clients", "PUT", client_id, {"name": "Piloto atualizado"}))[0] == 204
+            assert (await call("clients", "PUT", client_id, {"name": "Piloto atualizado", "details": {**details, "address": "Rua Nova, 321"}}))[0] == 204
             assert (await call("clients", "DELETE", client_id))[0] == 204
             assert (await request("GET", "me", headers=pilot))[0] == 401
             assert (await request("POST", "login", pilot_login, (origin_header,)))[0] == 401
             assert client_id.encode() not in (await request("GET", "companies"))[2]
             archived = next(row for row in json.loads((await call("clients", "GET", ""))[1]) if row["id"] == client_id)
             assert archived["archived_at"] and archived["name"] == "Piloto atualizado"
+            assert archived["details"]["address"] == "Rua Nova, 321"
             async with tenant_transaction(engine, pilot_tenant) as connection:
                 assert await connection.scalar(text("SELECT count(*) FROM nexus_atende.messages")) == 1
                 assert await connection.scalar(text("SELECT status FROM nexus_atende.work_items")) == "cancelled"
@@ -473,6 +491,9 @@ async def check() -> None:
                 assert [call.args[2]["text"] for call in delivery.call_args_list] == [
                     "Primeira resposta", "Primeira resposta", "Segunda resposta",
                 ]
+            assert (await call("operators", "DELETE", member["id"]))[0] == 204
+            assert (await request("GET", "me", headers=third))[0] == 401
+            assert member["id"].encode() not in (await call("operators", "GET", ""))[1]
     finally:
         await engine.dispose()
 

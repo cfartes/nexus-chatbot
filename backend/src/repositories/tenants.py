@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
-from src.schemas.tenants import ClientChoice, ClientCreate, ClientRecord, TenantConnection
+from src.schemas.tenants import ClientChoice, ClientCreate, ClientRecord, ClientUpdate, TenantConnection
 
 
 class PhoneInUse(Exception):
@@ -22,9 +22,13 @@ class TenantRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def clients(self) -> list[ClientRecord]:
+    async def clients(self, *, include_details: bool = False) -> list[ClientRecord]:
         async with self._engine.connect() as connection:
-            rows = await connection.execute(text("SELECT * FROM nexus_atende.client_registry()"))
+            rows = await connection.execute(text("""
+                SELECT id, name, archived_at, admin_invite_pending,
+                    CASE WHEN :include_details THEN details ELSE '{}'::jsonb END AS details
+                FROM nexus_atende.client_registry()
+            """), {"include_details": include_details})
             return [ClientRecord.model_validate(row) for row in rows.mappings()]
 
     async def active_choices(self) -> list[ClientChoice]:
@@ -35,8 +39,9 @@ class TenantRepository:
     async def create_client(self, tenant_id: UUID, content: ClientCreate, invite_hash: str) -> None:
         try:
             async with tenant_transaction(self._engine, tenant_id) as connection:
-                await connection.execute(text("INSERT INTO nexus_atende.tenants (id, name) VALUES (:id, :name)"),
-                                         {"id": tenant_id, "name": content.name})
+                await connection.execute(text("""
+                    INSERT INTO nexus_atende.tenants (id, name, client_details) VALUES (:id, :name, CAST(:details AS jsonb))
+                """), {"id": tenant_id, "name": content.name, "details": content.details.model_dump_json()})
                 await connection.execute(text("""
                     INSERT INTO nexus_atende.users (tenant_id, name, email, password_hash, role, is_active, invite_hash, invite_expires)
                     VALUES (:id, :name, :email, '', 'admin', false, :invite_hash, now() + interval '24 hours')
@@ -56,15 +61,17 @@ class TenantRepository:
             """), {"id": tenant_id, "invite_hash": invite_hash})
             return email
 
-    async def update_client(self, tenant_id: UUID, name: str | None) -> bool:
+    async def update_client(self, tenant_id: UUID, content: ClientUpdate | None) -> bool:
         async with tenant_transaction(self._engine, tenant_id) as connection:
-            values = {"id": tenant_id, "name": name}
+            values = {"id": tenant_id, "name": content.name if content else None,
+                      "details": content.details.model_dump_json() if content and content.details else None}
             changed = await connection.scalar(text("""
                 UPDATE nexus_atende.tenants SET name = coalesce(:name, name),
+                    client_details = coalesce(CAST(:details AS jsonb), client_details),
                     archived_at = CASE WHEN :name IS NULL THEN now() ELSE archived_at END
                 WHERE id = :id AND archived_at IS NULL RETURNING id
             """), values)
-            if changed is not None and name is None:
+            if changed is not None and content is None:
                 await connection.execute(text("DELETE FROM nexus_atende.sessions WHERE tenant_id = :id"), values)
                 await connection.execute(text("""
                     UPDATE nexus_atende.work_items SET status = 'cancelled'

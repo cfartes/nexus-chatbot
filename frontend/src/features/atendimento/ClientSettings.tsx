@@ -3,16 +3,18 @@
 import { Button } from '@astryxdesign/core/Button';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage } from './api';
+import { RegistrationDialog, registrationField } from './RegistrationDialog';
 
-type Client = { id: string; name: string; archived_at: string | null; admin_invite_pending: boolean };
+type ClientDetails = { address: string; document: string; contact_phone: string; contact_email: string };
+type Client = { id: string; name: string; archived_at: string | null; admin_invite_pending: boolean; details: ClientDetails };
 type Invite = Client & { invite_error: string | null };
-const field = 'rounded-lg border border-slate-300 px-3 py-2';
 
 export function ClientSettings({ platformTenant }: { platformTenant: string }) {
   const [clients, setClients] = useState<Client[]>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const [editing, setEditing] = useState<Client | 'new'>();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -27,8 +29,8 @@ export function ClientSettings({ platformTenant }: { platformTenant: string }) {
     setBusy(true); setError(''); setStatus('');
     try {
       const message = await action();
-      setClients(await api<Client[]>('/clients'));
       setStatus(message);
+      setClients(await api<Client[]>('/clients'));
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -36,50 +38,52 @@ export function ClientSettings({ platformTenant }: { platformTenant: string }) {
     }
   }
 
-  function add(event: FormEvent<HTMLFormElement>) {
+  const client = editing === 'new' ? undefined : editing;
+
+  function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
+    const data = new FormData(event.currentTarget);
     void run(async () => {
+      const company = {
+        name: data.get('company'), details: {
+          address: data.get('address'), document: data.get('document'),
+          contact_phone: data.get('contactPhone'), contact_email: data.get('contactEmail'),
+        },
+      };
+      if (client) {
+        await api(`/clients/${client.id}`, { method: 'PUT', body: JSON.stringify(company) });
+        setEditing(undefined);
+        return 'Cliente atualizado.';
+      }
       const result = await api<Invite>('/clients', { method: 'POST', body: JSON.stringify({
-        name: data.get('company'), admin: { name: data.get('adminName'), email: data.get('adminEmail') },
+        ...company, admin: { name: data.get('adminName'), email: data.get('adminEmail') },
       }) });
-      form.reset();
+      setEditing(undefined);
       return result.invite_error ? `Cliente cadastrado. ${result.invite_error}` : 'Cliente cadastrado e convite enviado.';
     });
   }
 
   return <section className="mx-auto grid max-w-screen-lg gap-4 p-4" aria-labelledby="clients-title">
-    <h2 id="clients-title" className="text-2xl font-semibold">Clientes</h2>
-    {error && <p role="alert" className="text-red-800">{error}</p>}
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <h2 id="clients-title" className="text-2xl font-semibold">Clientes</h2>
+      <Button label="Novo cliente" variant="primary" isDisabled={busy} onClick={() => { setError(''); setEditing('new'); }} />
+    </header>
+    {error && !editing && <p role="alert" className="text-red-800">{error}</p>}
     {status && <p role="status">{status}</p>}
-    <form onSubmit={add} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-3">
-      <label className="grid gap-1 text-sm">Empresa<input name="company" required maxLength={100} className={field} /></label>
-      <label className="grid gap-1 text-sm">Nome do administrador<input name="adminName" required maxLength={100} className={field} /></label>
-      <label className="grid gap-1 text-sm">E-mail do administrador<input name="adminEmail" type="email" required maxLength={150} className={field} /></label>
-      <Button type="submit" label="Cadastrar e convidar" variant="primary" isDisabled={busy} />
-    </form>
+    {clients?.length === 0 && <p className="text-sm text-slate-600">Nenhum cliente cadastrado.</p>}
     <ul className="grid gap-3">
       {clients?.map(client => <li key={client.id} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-5">
-        {client.archived_at ? <p>{client.name} · Arquivado</p> : <>
-          <form key={client.name} className="flex flex-wrap items-end gap-3" onSubmit={event => {
-            event.preventDefault();
-            const name = new FormData(event.currentTarget).get('name');
-            void run(async () => {
-              await api(`/clients/${client.id}`, { method: 'PUT', body: JSON.stringify({ name }) });
-              return 'Cliente atualizado.';
-            });
-          }}>
-            <label className="grid gap-1 text-sm">Empresa<input name="name" required maxLength={100} defaultValue={client.name} className={field} /></label>
-            <Button type="submit" label="Salvar nome" isDisabled={busy} />
-          </form>
+        <p className="break-all font-medium">{client.name}{client.archived_at ? ' · Arquivado' : ''}</p>
+        {!client.archived_at && <>
+          {client.details.contact_email && <p className="break-all text-sm text-slate-600">{client.details.contact_email} · {client.details.contact_phone}</p>}
           <section className="flex flex-wrap gap-3" aria-label={`Ações para ${client.name}`}>
+            <Button label="Editar" isDisabled={busy} onClick={() => { setError(''); setEditing(client); }} />
             {client.admin_invite_pending && <Button label="Reenviar convite do administrador" isDisabled={busy} onClick={() => void run(async () => {
               const result = await api<Invite>(`/clients/${client.id}/invite`, { method: 'POST' });
               return result.invite_error ?? 'Convite enviado.';
             })} />}
-            {client.id !== platformTenant && <Button label="Arquivar cliente" isDisabled={busy} onClick={() => {
-              if (window.confirm(`Arquivar ${client.name}? O acesso será bloqueado e o histórico ficará preservado.`)) void run(async () => {
+            {client.id !== platformTenant && <Button label="Excluir" isDisabled={busy} onClick={() => {
+              if (window.confirm(`Excluir ${client.name}? O acesso será bloqueado e o histórico ficará preservado.`)) void run(async () => {
                 await api(`/clients/${client.id}`, { method: 'DELETE' });
                 return 'Cliente arquivado.';
               });
@@ -88,5 +92,18 @@ export function ClientSettings({ platformTenant }: { platformTenant: string }) {
         </>}
       </li>)}
     </ul>
+    {editing && <RegistrationDialog title={client ? 'Editar cliente' : 'Novo cliente'}
+      submitLabel={client ? 'Salvar cliente' : 'Cadastrar e convidar'} error={error} busy={busy} onClose={() => setEditing(undefined)} onSubmit={save}>
+      <label className="grid gap-1 text-sm">Nome do cliente<input name="company" defaultValue={client?.name} required maxLength={100} className={registrationField} /></label>
+      <label className="grid gap-1 text-sm">CPF ou CNPJ<input name="document" defaultValue={client?.details.document} required maxLength={24} className={registrationField} /></label>
+      <label className="grid gap-1 text-sm">Endereço completo<textarea name="address" autoComplete="street-address" defaultValue={client?.details.address} required maxLength={400} rows={2} className={registrationField} /></label>
+      <label className="grid gap-1 text-sm">Telefone de contato<input name="contactPhone" type="tel" defaultValue={client?.details.contact_phone} required maxLength={32} className={registrationField} /></label>
+      <label className="grid gap-1 text-sm">E-mail de contato<input name="contactEmail" type="email" defaultValue={client?.details.contact_email} required maxLength={150} className={registrationField} /></label>
+      {!client && <fieldset className="grid gap-2 border-t border-slate-200 pt-2">
+        <legend className="text-sm font-medium">Administrador inicial</legend>
+        <label className="grid gap-1 text-sm">Nome do administrador<input name="adminName" required maxLength={100} className={registrationField} /></label>
+        <label className="grid gap-1 text-sm">E-mail do administrador<input name="adminEmail" type="email" required maxLength={150} className={registrationField} /></label>
+      </fieldset>}
+    </RegistrationDialog>}
   </section>;
 }

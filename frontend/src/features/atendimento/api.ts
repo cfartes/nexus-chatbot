@@ -1,8 +1,11 @@
 export type Queue = 'waiting' | 'bot' | 'mine' | 'assigned';
+export const departmentLabels = { comercial: 'Comercial', financeiro: 'Financeiro', suporte: 'Suporte', sac: 'SAC' };
+export type Department = keyof typeof departmentLabels;
 export interface Operator { id: string; name: string; tenant_id: string; role: 'admin' | 'operator'; platform_admin: boolean }
 export interface Conversation {
   id: string; chat_id: string; customer_name: string | null; state: 'waiting' | 'bot' | 'assigned';
   assigned_user_id: string | null; last_interaction: string; origin_name: string | null;
+  department: Department | null;
 }
 export interface Message {
   id: string; sender_type: 'customer' | 'bot' | 'operator'; sender_id: string | null;

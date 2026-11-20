@@ -62,6 +62,7 @@ class BotContext(BaseModel):
     origin_slug: str | None = None
     origin_name: str | None = None
     local_hour: int = 0
+    awaiting_department: bool = False
 
 
 class OpeningUpdate(BaseModel):

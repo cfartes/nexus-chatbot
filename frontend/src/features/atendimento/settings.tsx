@@ -7,9 +7,9 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, errorMessage, upload } from './api';
 import { Integrations } from './integrations';
+import { OperatorSettings } from './OperatorSettings';
 import { SettingsCard, settingsGrid } from './settings-card';
 
-type Member = { id: string; name: string; email: string; is_active: boolean; invite_pending: boolean; invite_sent: boolean | null; invite_error?: string | null };
 type Source = { source: string; chunks: number };
 type Origin = { slug: string; name: string };
 type Connection = { status: string; phone_number: string | null; session_id: string | null; error?: string | null; retry_after?: number | null };
@@ -27,7 +27,6 @@ const connectionLabels: Record<string, string> = {
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
 
 export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
-  const [members, setMembers] = useState<Member[]>();
   const [sources, setSources] = useState<Source[]>();
   const [origins, setOrigins] = useState<Origin[]>();
   const [originsFailed, setOriginsFailed] = useState(false);
@@ -35,7 +34,6 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   const [originSlug, setOriginSlug] = useState('');
   const [connection, setConnection] = useState<Connection>();
   const [connectionError, setConnectionError] = useState('');
-  const [membersFailed, setMembersFailed] = useState(false);
   const [sourcesError, setSourcesError] = useState('');
   const [importError, setImportError] = useState('');
   const [fileProgress, setFileProgress] = useState<number | 'sending' | 'processing'>();
@@ -76,7 +74,6 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   }, []);
 
   useEffect(() => {
-    void api<Member[]>('/operators').then(setMembers).catch(failure => { setMembersFailed(true); setError(errorMessage(failure)); });
     void loadSources();
     void api<{ email: string }>('/integrations/handoff-email').then(({ email }) => {
       setAlertEmail(email); setSavedAlertEmail(email);
@@ -100,17 +97,6 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
     try { await action(); setStatus(success); }
     catch (failure) { onError(errorMessage(failure)); }
     finally { setBusy(false); }
-  }
-
-  function addMember(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const values = Object.fromEntries(new FormData(form));
-    void run(async () => {
-      const member = await api<Member>('/operators', { method: 'POST', body: JSON.stringify(values) });
-      setMembers(current => [...(current ?? []), member]); form.reset();
-      if (!member.invite_sent) throw new ApiError(502, `Operador cadastrado. ${member.invite_error ?? 'O e-mail falhou.'} Use Reenviar convite.`);
-    }, 'Convite enviado.');
   }
 
   function importSource(event: FormEvent<HTMLFormElement>) {
@@ -150,8 +136,6 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   const hasConnection = Boolean(connection?.phone_number || connection?.session_id || (connection && connection.status !== 'NOT_CONFIGURED'));
   const phoneDetail = connectionError || (connected ? 'Telefone cadastrado e sessão conectada'
     : connection?.phone_number && !connection.session_id ? 'Telefone salvo. Inicie o pareamento.' : connectionLabels[connection?.status ?? ''] ?? 'Salve o telefone da empresa');
-  const pendingInvites = members?.some(member => member.invite_pending);
-  const activeMember = members?.some(member => member.is_active);
   const originPhone = connection?.phone_number?.replace(/\D/g, '');
 
   return <section className="mx-auto grid max-w-screen-xl gap-4 p-4" aria-label="Configurações">
@@ -182,41 +166,7 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
           }, 'Sessão iniciada. Aguarde o QR Code.')} />}
         <Button label="Atualizar conexão" isDisabled={busy} onClick={() => void loadConnection()} />
       </SettingsCard>
-      <SettingsCard title="Operadores" state={membersFailed ? 'warning' : !members ? 'loading' : pendingInvites ? 'warning' : activeMember ? 'ready' : 'missing'} detail={membersFailed ? 'Falha ao consultar os operadores' : pendingInvites ? 'Há convites pendentes' : activeMember ? 'Há operadores ativos' : 'Convide ou ative um operador'} action={<Button type="submit" form="settings-operator" label="Enviar convite" variant="primary" isDisabled={busy} />}>
-        <ul className="grid gap-2">{(members ?? []).map(member => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={member.id}>
-          <p className="break-all text-sm">{member.name}<br />{member.email}<br />{member.invite_pending ? 'Convite pendente' : member.is_active ? 'Ativo' : 'Desativado'}</p>
-          {member.invite_pending ? <Button label="Reenviar convite" isDisabled={busy} onClick={() => void run(async () => {
-            const result = await api<Member>(`/operators/${member.id}/invite`, { method: 'POST' });
-            if (!result.invite_sent) throw new ApiError(502, result.invite_error ?? 'Não foi possível enviar o convite.');
-          }, 'Convite reenviado.')} /> : <Button label={member.is_active ? 'Desativar' : 'Reativar'} isDisabled={busy} onClick={() => {
-            if (member.is_active && !window.confirm(`Desativar ${member.name}? As conversas voltarão à fila.`)) return;
-            void run(async () => {
-              const updated = await api<Member>(`/operators/${member.id}`, { method: 'PUT', body: JSON.stringify({ name: member.name, is_active: !member.is_active }) });
-              setMembers(current => current?.map(item => item.id === updated.id ? updated : item));
-            }, 'Lista de operadores atualizada.');
-          }} />}
-          <details className="w-full text-sm"><summary className="cursor-pointer underline">Editar operador</summary>
-            <form className="mt-2 grid gap-2" onSubmit={event => {
-              event.preventDefault(); const form = event.currentTarget;
-              const values = new FormData(form);
-              void run(async () => {
-                const updated = await api<Member>(`/operators/${member.id}`, { method: 'PUT', body: JSON.stringify({
-                  name: values.get('name'), is_active: member.is_active,
-                }) });
-                setMembers(current => current?.map(item => item.id === updated.id ? updated : item));
-                form.reset();
-              }, 'Operador atualizado.');
-            }}>
-              <label className="grid gap-1">Nome<input name="name" defaultValue={member.name} required maxLength={100} className={field} /></label>
-              <Button label="Aplicar edição" type="submit" isDisabled={busy} />
-            </form>
-          </details>
-        </li>)}</ul>
-        <form id="settings-operator" className="grid gap-2" onSubmit={addMember}>
-          <label className="grid gap-1 text-sm">Nome<input name="name" required maxLength={100} className={field} /></label>
-          <label className="grid gap-1 text-sm">E-mail<input name="email" required type="email" maxLength={150} className={field} /></label>
-        </form>
-      </SettingsCard>
+      <OperatorSettings />
       <SettingsCard title="Base de conhecimento" state={sourcesError ? 'warning' : !sources ? 'loading' : sources.length ? 'ready' : 'missing'} detail={sourcesError ? 'Falha ao consultar as fontes' : sources?.length ? 'Há fontes adicionadas' : 'Adicione a primeira fonte'} action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy || !sources || Boolean(sourcesError)} />}>
         <p className="text-sm text-slate-600">Adicione fontes sobre a Nexus, seus serviços, aplicativos e funcionalidades.</p>
         {fileProgress !== undefined && <ProgressBar label={fileProgress === 'processing' ? 'Processando e indexando o arquivo…' : 'Enviando arquivo…'}
