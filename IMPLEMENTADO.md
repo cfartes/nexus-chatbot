@@ -88,6 +88,8 @@ Ao importar um arquivo, o painel mostra o progresso do envio e sinaliza a etapa 
 
 O administrador de cada empresa define o destinatário em **Avisos de atendimento humano**. A credencial e o remetente do Resend continuam compartilhados. A empresa principal conserva o destinatário anterior até salvar a própria preferência.
 
+Administradores e atendentes responsáveis podem transferir conversas atribuídas. O destinatário recebe um e-mail individual pelo Resend e um aviso no painel que permanece até ser fechado ou até abrir a conversa. Para exibir também a notificação do sistema, use **Ativar notificações do sistema** no painel e conceda a permissão solicitada pelo navegador.
+
 O teste da IA distingue uma pergunta sem cobertura de uma base vazia, vetores incompatíveis e erros do provedor. Se as fontes foram importadas com outro modelo de embeddings, reimporte-as para tornar o conteúdo disponível no modelo atual.
 
 ## Executar a migração local

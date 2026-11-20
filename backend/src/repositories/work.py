@@ -36,7 +36,7 @@ class WorkRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def claim(self, tenant_id: UUID, email_enabled: bool, whatsapp_enabled: bool) -> WorkItem | None:
+    async def claim(self, tenant_id: UUID, email_enabled: bool, whatsapp_enabled: bool, *, direct_email_enabled: bool = False) -> WorkItem | None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             enabled = await connection.scalar(text("""
                 SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND archived_at IS NULL FOR SHARE
@@ -65,7 +65,9 @@ class WorkRepository:
                 WITH next_item AS (
                     SELECT item.id FROM nexus_atende.work_items AS item
                     WHERE item.tenant_id = :tenant_id AND item.status = 'pending' AND item.available_at <= now()
-                        AND (item.kind <> 'notify' OR :email_enabled AND
+                        AND (item.kind <> 'notify' OR
+                            ((item.recipient_user_id IS NULL AND :email_enabled)
+                             OR (item.recipient_user_id IS NOT NULL AND :direct_email_enabled)) AND
                             (item.attempts = 0 OR item.created_at > now() - interval '12 hours'))
                         AND (item.kind <> 'whatsapp' OR :whatsapp_enabled)
                         AND (item.kind = 'notify' OR NOT EXISTS (
@@ -79,10 +81,22 @@ class WorkRepository:
                 UPDATE nexus_atende.work_items AS work SET status = 'processing',
                     attempts = attempts + 1, started_at = now()
                 FROM next_item WHERE work.tenant_id = :tenant_id AND work.id = next_item.id
-                RETURNING work.id, work.conversation_id, work.message_id, work.kind, work.attempts
-            """), {"tenant_id": tenant_id, "email_enabled": email_enabled, "whatsapp_enabled": whatsapp_enabled})
+                RETURNING work.id, work.conversation_id, work.message_id, work.kind, work.attempts, work.recipient_user_id
+            """), {"tenant_id": tenant_id, "email_enabled": email_enabled, "whatsapp_enabled": whatsapp_enabled,
+                    "direct_email_enabled": direct_email_enabled})
             row = result.mappings().one_or_none()
             return WorkItem.model_validate(row) if row is not None else None
+
+    async def transfer_recipient(self, tenant_id: UUID, work: WorkItem) -> str | None:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            email: str | None = await connection.scalar(text("""
+                SELECT users.email FROM nexus_atende.users AS users
+                JOIN nexus_atende.conversations AS conversation ON conversation.tenant_id = users.tenant_id
+                    AND conversation.assigned_user_id = users.id
+                WHERE users.tenant_id = :tenant AND users.id = :recipient AND users.is_active
+                    AND conversation.id = :conversation AND conversation.state = 'assigned'
+            """), {"tenant": tenant_id, "recipient": work.recipient_user_id, "conversation": work.conversation_id})
+            return email
 
     async def complete(self, tenant_id: UUID, work: WorkItem, status: WorkStatus) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:

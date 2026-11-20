@@ -40,13 +40,13 @@ export function Thread({ conversation, operator, revision, onChange, onClaim }: 
   }, [base, revision]);
 
   useEffect(() => {
-    if (!admin || conversation.state !== 'assigned') return;
+    if ((!admin && !owner) || conversation.state !== 'assigned') return;
     const controller = new AbortController();
     api<Operator[]>('/conversations/operators', { signal: controller.signal }).then(setOperators).catch(failure => {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     });
     return () => controller.abort();
-  }, [admin, conversation.state]);
+  }, [admin, owner, conversation.state]);
 
   async function run(action: () => Promise<void>) {
     if (transition.current) return;
@@ -91,7 +91,7 @@ export function Thread({ conversation, operator, revision, onChange, onClaim }: 
         {(admin || owner) &&
           <Button label={conversation.state === 'bot' ? 'Pausar IA' : 'Devolver à IA'} isDisabled={busy} onClick={() => void run(async () => { await mutate('/bot', 'PUT', { active: conversation.state !== 'bot' }); onChange(); })} />}
         {(admin || owner) && <Button label="Encerrar atendimento" isDisabled={busy} onClick={() => void run(async () => { await mutate('/close'); onChange(); })} />}
-        {admin && conversation.state === 'assigned' && destinations.length > 0 && <form className="flex items-center gap-2" onSubmit={event => {
+        {(admin || owner) && conversation.state === 'assigned' && destinations.length > 0 && <form className="flex items-center gap-2" onSubmit={event => {
           event.preventDefault(); const user = new FormData(event.currentTarget).get('user');
           if (typeof user === 'string' && user) void run(async () => { await mutate('/transfer', 'POST', { user_id: user }); onChange(); });
         }}><select aria-label="Atendente de destino" name="user" required className="rounded border border-slate-300 p-2"><option value="">Atendente</option>

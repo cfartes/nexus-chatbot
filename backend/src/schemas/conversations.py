@@ -32,6 +32,11 @@ class TransferRequest(BaseModel):
     user_id: UUID
 
 
+class TransferNotice(BaseModel):
+    id: UUID
+    conversation_id: UUID
+
+
 class SendTextRequest(BaseModel):
     request_id: UUID
     text: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00]+$")

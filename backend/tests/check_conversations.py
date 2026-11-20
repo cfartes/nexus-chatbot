@@ -59,7 +59,19 @@ async def check() -> None:
         assert (await call("GET", "", admin, query=b"queue=assigned"))[0] == 200
         transfer_path = f"{conversation_id}/transfer"
         target = json.dumps({"user_id": loser_id}).encode()
-        assert (await call("POST", transfer_path, winner, target))[0] == 403
+        assert (await call("GET", "operators", winner))[0] == 200
+        assert (await call("POST", transfer_path, loser, target))[0] == 409
+        assert (await call("POST", transfer_path, winner, target))[0] == 204
+        status, notices = await call("GET", "transfer-notices", loser)
+        assert status == 200
+        notice, = json.loads(notices)
+        assert notice["conversation_id"] == conversation_id
+        assert json.loads((await call("GET", "transfer-notices", winner))[1]) == []
+        assert (await call("DELETE", f"transfer-notices/{notice['id']}", winner))[0] == 204
+        assert json.loads((await call("GET", "transfer-notices", loser))[1]) == [notice]
+        assert (await call("DELETE", f"transfer-notices/{notice['id']}", loser))[0] == 204
+        assert json.loads((await call("GET", "transfer-notices", loser))[1]) == []
+        assert (await call("POST", transfer_path, admin, json.dumps({"user_id": winner_id}).encode()))[0] == 204
         assert (await call("POST", transfer_path, admin, target))[0] == 204
         assert (await call("GET", history_path, winner))[0] == 404
         assert (await call("GET", history_path, loser))[0] == 200

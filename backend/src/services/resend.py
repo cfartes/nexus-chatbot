@@ -58,11 +58,13 @@ class ResendClient:
         if not accepted:
             raise ResendRejected("O Resend não retornou uma confirmação de envio")
 
-    async def notify(self, work: WorkItem) -> WorkStatus:
+    async def notify(self, work: WorkItem, recipient: str | None = None) -> WorkStatus:
         retry: WorkStatus = "pending" if work.attempts < 3 else "failed"
         try:
-            accepted = await self._send(self._recipient, "Nexus Atende | Atendimento aguardando",
-                f"Uma conversa precisa de atendimento humano. Abra a fila do Nexus Atende.\n\nReferência: {work.conversation_id}",
+            subject = "Conversa transferida para você" if recipient else "Atendimento aguardando"
+            intro = "Uma conversa foi transferida para você. Abra Meus atendimentos no Nexus Atende." if recipient else "Uma conversa precisa de atendimento humano. Abra a fila do Nexus Atende."
+            accepted = await self._send(recipient or self._recipient, f"Nexus Atende | {subject}",
+                f"{intro}\n\nReferência: {work.conversation_id}",
                 f"nexus-atende/handoff/{work.id}")
         except HTTPError as error:
             logger.warning("Resend rejected handoff notification: HTTP %s", error.code)

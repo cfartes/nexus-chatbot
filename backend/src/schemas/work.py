@@ -13,6 +13,7 @@ class WorkItem(BaseModel):
     message_id: UUID | None
     kind: WorkKind
     attempts: int
+    recipient_user_id: UUID | None = None
 
 
 class WorkReceipt(BaseModel):

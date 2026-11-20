@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
 from src.schemas.auth import Operator
-from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue
+from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue, TransferNotice
 
 
 class ConversationRepository:
@@ -20,7 +20,7 @@ class ConversationRepository:
             """), {"tenant_id": tenant_id})
             return [Operator.model_validate(row) for row in result.mappings()]
 
-    async def list_queue(self, actor: Operator, queue: Queue, limit: int, offset: int) -> list[ConversationSummary]:
+    async def list_queue(self, actor: Operator, queue: Queue, limit: int, offset: int, focus: UUID | None = None) -> list[ConversationSummary]:
         state = "assigned" if queue == "mine" else queue
         async with tenant_transaction(self._engine, actor.tenant_id) as connection:
             result = await connection.execute(text("""
@@ -34,11 +34,11 @@ class ConversationRepository:
                     ON (origins.tenant_id, origins.slug) = (conversations.tenant_id, conversations.origin_slug)
                 WHERE conversations.tenant_id = :tenant_id AND conversations.state = :state
                     AND (NOT :mine OR conversations.assigned_user_id = :actor_id)
-                ORDER BY conversations.last_interaction DESC, conversations.id DESC
+                ORDER BY (conversations.id = :focus) DESC NULLS LAST, conversations.last_interaction DESC, conversations.id DESC
                 LIMIT :limit OFFSET :offset
             """), {
                 "tenant_id": actor.tenant_id, "state": state, "mine": queue == "mine",
-                "actor_id": actor.id, "limit": limit, "offset": offset,
+                "actor_id": actor.id, "limit": limit, "offset": offset, "focus": focus,
             })
             return [ConversationSummary.model_validate(row) for row in result.mappings()]
 
@@ -119,16 +119,55 @@ class ConversationRepository:
             """), values)
             return True
 
-    async def transfer(self, tenant_id: UUID, conversation_id: UUID, user_id: UUID) -> bool:
-        async with tenant_transaction(self._engine, tenant_id) as connection:
+    async def transfer(self, actor: Operator, conversation_id: UUID, user_id: UUID) -> bool:
+        async with tenant_transaction(self._engine, actor.tenant_id) as connection:
+            values = {"tenant_id": actor.tenant_id, "id": conversation_id, "user_id": user_id,
+                      "actor_id": actor.id, "admin": actor.role == "admin"}
             active = await connection.scalar(text("""
-                SELECT id FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :id AND is_active FOR SHARE
-            """), {"tenant_id": tenant_id, "id": user_id})
+                SELECT id FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :user_id AND is_active FOR SHARE
+            """), values)
             if active is None:
                 return False
-            changed = await connection.scalar(text("""
-                UPDATE nexus_atende.conversations SET assigned_user_id = :user_id
-                WHERE tenant_id = :tenant_id AND id = :conversation_id AND state = 'assigned'
-                RETURNING id
-            """), {"tenant_id": tenant_id, "conversation_id": conversation_id, "user_id": user_id})
-            return changed is not None
+            current = await connection.scalar(text("""
+                SELECT assigned_user_id FROM nexus_atende.conversations
+                WHERE tenant_id = :tenant_id AND id = :id AND state = 'assigned'
+                    AND (:admin OR assigned_user_id = :actor_id) FOR UPDATE
+            """), values)
+            if current is None:
+                return False
+            if current == user_id:
+                return True
+            await connection.execute(text("""
+                UPDATE nexus_atende.conversations SET assigned_user_id = :user_id, last_interaction = clock_timestamp()
+                WHERE tenant_id = :tenant_id AND id = :id
+            """), values)
+            await connection.execute(text("""
+                UPDATE nexus_atende.work_items SET acknowledged_at = now(),
+                    status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END
+                WHERE tenant_id = :tenant_id AND conversation_id = :id AND recipient_user_id IS NOT NULL
+                    AND (acknowledged_at IS NULL OR status = 'pending')
+            """), values)
+            await connection.execute(text("""
+                INSERT INTO nexus_atende.work_items (tenant_id, conversation_id, kind, recipient_user_id)
+                VALUES (:tenant_id, :id, 'notify', :user_id)
+            """), values)
+            return True
+
+    async def transfer_notices(self, actor: Operator) -> list[TransferNotice]:
+        async with tenant_transaction(self._engine, actor.tenant_id) as connection:
+            result = await connection.execute(text("""
+                SELECT work.id, work.conversation_id FROM nexus_atende.work_items AS work
+                JOIN nexus_atende.conversations AS conversation
+                    ON (conversation.tenant_id, conversation.id) = (work.tenant_id, work.conversation_id)
+                WHERE work.tenant_id = :tenant_id AND work.recipient_user_id = :actor
+                    AND work.acknowledged_at IS NULL AND conversation.assigned_user_id = :actor
+                ORDER BY work.created_at DESC, work.id DESC
+            """), {"tenant_id": actor.tenant_id, "actor": actor.id})
+            return [TransferNotice.model_validate(row) for row in result.mappings()]
+
+    async def acknowledge_transfer(self, actor: Operator, notice_id: UUID) -> None:
+        async with tenant_transaction(self._engine, actor.tenant_id) as connection:
+            await connection.execute(text("""
+                UPDATE nexus_atende.work_items SET acknowledged_at = now()
+                WHERE tenant_id = :tenant_id AND id = :id AND recipient_user_id = :actor AND acknowledged_at IS NULL
+            """), {"tenant_id": actor.tenant_id, "id": notice_id, "actor": actor.id})

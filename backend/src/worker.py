@@ -74,13 +74,18 @@ class Worker:
     async def run_once(self) -> bool:
         resend = await self._integrations.resend(self._tenant_id)
         openwa = await self._integrations.openwa(self._tenant_id)
-        work = await self._work.claim(self._tenant_id, bool(resend and resend.notifications_enabled), bool(openwa and not openwa.retry_after()))
+        work = await self._work.claim(self._tenant_id, bool(resend and resend.notifications_enabled),
+                                      bool(openwa and not openwa.retry_after()), direct_email_enabled=resend is not None)
         if work is None:
             return False
         if work.kind == "rag":
             await self._bot.process(self._tenant_id, work)
         elif work.kind == "notify" and resend:
-            await self._work.complete(self._tenant_id, work, await resend.notify(work))
+            if work.recipient_user_id is None:
+                await self._work.complete(self._tenant_id, work, await resend.notify(work))
+            else:
+                recipient = await self._work.transfer_recipient(self._tenant_id, work)
+                await self._work.complete(self._tenant_id, work, await resend.notify(work, recipient) if recipient else "cancelled")
         elif work.kind == "whatsapp" and openwa:
             await self._outgoing.dispatch(self._tenant_id, work, openwa.send_text)
         return True

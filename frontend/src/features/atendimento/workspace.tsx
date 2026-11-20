@@ -3,13 +3,14 @@
 import { Button } from '@astryxdesign/core/Button';
 import { VStack } from '@astryxdesign/core/Layout';
 import Image from 'next/image';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import logo from '../../assets/nexus-atende.webp';
 import { api, ApiError, errorMessage, type Conversation, type Operator, type Queue } from './api';
 import { Thread } from './thread';
 import { Settings } from './settings';
 import { PasswordSettings } from './PasswordSettings';
 import { ClientSettings } from './ClientSettings';
+import { TransferNotices } from './TransferNotices';
 
 const queues: { id: Queue; label: string }[] = [
   { id: 'waiting', label: 'Em espera' }, { id: 'mine', label: 'Meus atendimentos' },
@@ -63,12 +64,16 @@ export function Workspace() {
   const [offset, setOffset] = useState(0);
   const [rows, setRows] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<string>();
+  const [focus, setFocus] = useState<string>();
   const [revision, setRevision] = useState(0);
   const [view, setView] = useState<'inbox' | 'settings' | 'password' | 'clients'>('inbox');
   const [error, setError] = useState('');
   const [queueError, setQueueError] = useState('');
   const [connected, setConnected] = useState(false);
   const refresh = () => setRevision(value => value + 1);
+  const openTransfer = useCallback((id: string) => {
+    setView('inbox'); setQueue('mine'); setOffset(0); setSelected(id); setFocus(id);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -93,7 +98,8 @@ export function Workspace() {
   useEffect(() => {
     if (!operator) return;
     const controller = new AbortController();
-    api<Conversation[]>(`/conversations?queue=${queue}&offset=${offset}`, { signal: controller.signal }).then(items => {
+    const query = new URLSearchParams({ queue, offset: String(offset), ...(focus ? { focus } : {}) });
+    api<Conversation[]>(`/conversations?${query}`, { signal: controller.signal }).then(items => {
       setRows(items); setQueueError('');
     }).catch(failure => {
       if (controller.signal.aborted) return;
@@ -101,14 +107,14 @@ export function Workspace() {
       else setQueueError(`Fila de conversas · ${errorMessage(failure)}`);
     });
     return () => controller.abort();
-  }, [operator, queue, offset, revision]);
+  }, [operator, queue, offset, revision, focus]);
 
   async function logout() {
     try { await api('/auth/logout', { method: 'POST' }); }
     catch (failure) {
       if (!(failure instanceof ApiError && failure.status === 401)) { setError(errorMessage(failure)); return; }
     }
-    setOperator(null); setRows([]); setSelected(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setConnected(false); setQueueError('');
+    setOperator(null); setRows([]); setSelected(undefined); setFocus(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setConnected(false); setQueueError('');
   }
 
   if (operator === undefined) return <main className="p-8" aria-busy>Carregando sessão…</main>;
@@ -122,6 +128,8 @@ export function Workspace() {
         {operator.role === 'admin' && <button className="underline" onClick={() => setView('settings')}>Configurações</button>}
         {operator.platform_admin && <button className="underline" onClick={() => setView('clients')}>Clientes</button>}
         <button className="underline" onClick={() => setView('password')}>Alterar senha</button>
+        <TransferNotices key={operator.id} revision={revision} openConversation={openTransfer}
+          activeConversation={view === 'inbox' && active?.assigned_user_id === operator.id ? active.id : undefined} />
         <p>{operator.name}</p><button className="underline" onClick={logout}>Sair</button>
       </nav>
     </header>
@@ -133,7 +141,7 @@ export function Workspace() {
           <p className="text-xs text-slate-600">{connected ? 'Atualizações ao vivo' : 'Atualização periódica'}</p>
           <label className="grid gap-1 text-sm">Fila<select className={fieldStyle} value={queue} onChange={event => {
             const next = queues.find(item => item.id === event.target.value);
-            if (next) { setQueue(next.id); setOffset(0); setRows([]); setSelected(undefined); }
+            if (next) { setQueue(next.id); setOffset(0); setRows([]); setSelected(undefined); setFocus(undefined); }
           }}>{queues.filter(item => item.id !== 'assigned' || operator.role === 'admin').map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         </header>
         <VStack className="max-h-[26rem] overflow-y-auto md:max-h-[65vh]">

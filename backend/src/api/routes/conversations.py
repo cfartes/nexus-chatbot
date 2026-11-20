@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 
 from src.api.routes.auth import authenticated_operator, mutation_operator
 from src.schemas.auth import Operator
-from src.schemas.conversations import BotStateRequest, ConversationSummary, HistoryMessage, Queue, SendTextRequest, TransferRequest
+from src.schemas.conversations import BotStateRequest, ConversationSummary, HistoryMessage, Queue, SendTextRequest, TransferNotice, TransferRequest
 from src.schemas.work import WorkReceipt
 from src.services.conversations import BotUnavailable, ConversationService, ConversationUnavailable
 from src.services.events import ConversationEvents
@@ -36,20 +36,28 @@ async def conversation_events(actor: Reader, request: Request) -> StreamingRespo
 @router.get("/operators")
 async def operators(actor: Reader, service: Service, response: Response) -> list[Operator]:
     response.headers["Cache-Control"] = "no-store"
-    try:
-        return await service.operators(actor)
-    except PermissionError:
-        raise HTTPException(403, "Acesso restrito a administradores") from None
+    return await service.operators(actor)
+
+
+@router.get("/transfer-notices")
+async def transfer_notices(actor: Reader, service: Service, response: Response) -> list[TransferNotice]:
+    response.headers["Cache-Control"] = "no-store"
+    return await service.transfer_notices(actor)
+
+
+@router.delete("/transfer-notices/{notice_id}", status_code=204)
+async def acknowledge_transfer(notice_id: UUID, actor: Writer, service: Service) -> None:
+    await service.acknowledge_transfer(actor, notice_id)
 
 
 @router.get("")
 async def queue_entries(
     actor: Reader, service: Service, response: Response, queue: Queue = "waiting",
-    limit: PageSize = 50, offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+    limit: PageSize = 50, offset: Annotated[int, Query(ge=0, le=100_000)] = 0, focus: UUID | None = None,
 ) -> list[ConversationSummary]:
     response.headers["Cache-Control"] = "no-store"
     try:
-        return await service.list_queue(actor, queue, limit, offset)
+        return await service.list_queue(actor, queue, limit, offset, focus)
     except PermissionError:
         raise HTTPException(403, "Acesso restrito a administradores") from None
 
@@ -109,8 +117,6 @@ async def close(conversation_id: UUID, actor: Writer, service: Service) -> Respo
 async def transfer(conversation_id: UUID, transfer_request: TransferRequest, actor: Writer, service: Service) -> Response:
     try:
         await service.transfer(actor, conversation_id, transfer_request.user_id)
-    except PermissionError:
-        raise HTTPException(403, "Acesso restrito a administradores") from None
     except ConversationUnavailable:
         raise HTTPException(409, "Conversa ou operador indisponível") from None
     return Response(status_code=204)

@@ -130,7 +130,9 @@ async def check() -> None:
                       patch("src.services.openai.request_json", side_effect=[vector, completion]) as ai):
                     await drain()
                     if message_id == "work-ai":
-                        assert whatsapp.call_count == 2 and ai.call_count == 0 and resend.call_count == 1
+                        assert whatsapp.call_count == 2 and ai.call_count == 0 and resend.call_count == 2
+                        direct, = [args.args[2] for args in resend.call_args_list if "transferida" in args.args[2]["subject"]]
+                        assert direct["to"] == ["first@example.test"]
                         assert whatsapp.call_args.args[2]["text"] == "Bem-vindo à Nexus!\n\nComo posso chamar você?"
                     elif message_id == "work-name":
                         assert whatsapp.call_count == 1 and ai.call_count == 2 and resend.call_count == 0
@@ -140,9 +142,10 @@ async def check() -> None:
                     else:
                         assert whatsapp.call_count == 1 and ai.call_count == 0 and resend.call_count == 1
                         assert not whatsapp.call_args.args[2]["text"].startswith("Bem-vindo")
-                    email_headers = resend.call_args.args[1]
-                    assert email_headers["Idempotency-Key"].startswith("nexus-atende/handoff/")
-                    assert "5511888888888" not in str(resend.call_args.args[2])
+                    for email in resend.call_args_list:
+                        email_headers = email.args[1]
+                        assert email_headers["Idempotency-Key"].startswith("nexus-atende/handoff/")
+                        assert "5511888888888" not in str(email.args[2])
 
             status, body = await call("conversations", "GET", f"{conversation_id}/messages")
             assert status == 200 and sum(row["id"] == outgoing["request_id"] and row["delivery_status"] == "sent"
