@@ -60,6 +60,8 @@ Para Resend, salve a chave, o remetente verificado e, se desejar alertas de fila
 
 Para OpenWA, salve o endereço HTTPS terminado em `/api` e a chave no painel. O ambiente autoriza o endereço padrão em `NEXUS_ATENDE_OPENWA_BASE_URL` e endereços adicionais em `NEXUS_ATENDE_OPENWA_ALLOWED_URLS`, separados por vírgula. Ao trocar de servidor, informe a chave correspondente. A sessão dedicada e o segredo do webhook são provisionados no servidor. Consulte a sessão, o status e o QR Code na área WhatsApp.
 
+Em `https://atende.nexusdataanalytics.tech`, se o ambiente não indicar um endereço ou uma lista de servidores, o gateway compartilhado do RotaFY (`https://openwa.187-77-58-10.sslip.io/api`) aparece como padrão autorizado.
+
 Em **Configurações → WhatsApp**, informe o número da empresa com DDI e DDD. O painel salva o número em formato internacional mesmo antes do pareamento. A operação usa `PUT /api/v1/whatsapp/connection/phone` e exige administrador.
 
 Em **Configurações → Boas-vindas**, o administrador define o texto que abre a primeira resposta automática e uma nova sessão após 15 minutos sem interação. A saudação também acompanha o primeiro encaminhamento automático para a fila humana. Para o acervo da Nexus, cadastre fontes distintas por serviço ou aplicativo. A importação web lê uma página por URL da origem HTTPS configurada.

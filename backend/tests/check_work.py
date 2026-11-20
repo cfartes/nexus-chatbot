@@ -10,17 +10,21 @@ from zipfile import ZipFile
 from cryptography.fernet import Fernet
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.main import app
 from src.repositories.database import tenant_transaction
 from src.repositories.events import EventRepository
+from src.repositories.integrations import IntegrationRepository
+from src.schemas.integrations import OpenWASettings
+from src.services.integrations import IntegrationService
 from src.settings import Settings
 from src.worker import Worker
 from tests.check_auth import request
 from tests.check_conversations import login
-from tests.check_webhook import SECRET, SESSION, TENANT
+from tests.check_webhook import OTHER, SECRET, SESSION, TENANT
 
 
 def sample_pdf() -> bytes:
@@ -229,6 +233,15 @@ async def check() -> None:
                 status, body = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
             assert status == 200 and json.loads(body)["status"] == "answered"
             assert claude.call_args.args[0] == "https://api.anthropic.com/v1/messages"
+
+            production = Settings(public_origin="https://atende.nexusdataanalytics.tech", openwa_base_url=None, openwa_allowed_urls="")
+            known_endpoint = "https://openwa.187-77-58-10.sslip.io/api"
+            service = IntegrationService(IntegrationRepository(engine), production)
+            saved = await service.save_openwa(OTHER, OpenWASettings(base_url=known_endpoint, api_key=SecretStr("test-only")))
+            assert saved.openwa_url == known_endpoint and saved.openwa_has_key
+            explicit = production.model_copy(update={"openwa_allowed_urls": "https://custom.example.test/api"})
+            assert explicit.openwa_endpoint() is None
+            assert production.model_copy(update={"public_origin": "http://127.0.0.1:3000"}).openwa_endpoint() is None
     finally:
         await engine.dispose()
 

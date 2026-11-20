@@ -6,6 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
 
+NEXUS_PUBLIC_ORIGIN = "https://atende.nexusdataanalytics.tech"
+NEXUS_OPENWA_ENDPOINT = "https://openwa.187-77-58-10.sslip.io/api"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NEXUS_ATENDE_", hide_input_in_errors=True, env_ignore_empty=True)
@@ -35,7 +38,11 @@ class Settings(BaseSettings):
         return tenant_id, secret
 
     def openwa_endpoint(self) -> str | None:
-        return self.normalize_openwa_url(self.openwa_base_url) if self.openwa_base_url else None
+        if self.openwa_base_url:
+            return self.normalize_openwa_url(self.openwa_base_url)
+        if not self.openwa_allowed_urls.strip() and self.public_origin == NEXUS_PUBLIC_ORIGIN:
+            return NEXUS_OPENWA_ENDPOINT
+        return None
 
     @staticmethod
     def normalize_openwa_url(value: str) -> str:
