@@ -9,6 +9,7 @@ import { api, ApiError, errorMessage, type Conversation, type Operator, type Que
 import { Thread } from './thread';
 import { Settings } from './settings';
 import { PasswordSettings } from './PasswordSettings';
+import { ClientSettings } from './ClientSettings';
 
 const queues: { id: Queue; label: string }[] = [
   { id: 'waiting', label: 'Em espera' }, { id: 'mine', label: 'Meus atendimentos' },
@@ -21,22 +22,33 @@ function Login({ onLogin }: { onLogin: (operator: Operator) => void }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [company, setCompany] = useState('');
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>();
   useEffect(() => {
-    const value = new URLSearchParams(window.location.search).get('empresa');
-    if (value && /^[0-9a-f-]{36}$/i.test(value)) setCompany(value);
+    const controller = new AbortController();
+    api<{ id: string; name: string }[]>('/auth/companies', { signal: controller.signal }).then(items => {
+      setCompanies(items);
+      const value = new URLSearchParams(window.location.search).get('empresa');
+      if (value && items.some(item => item.id === value)) setCompany(value);
+    }).catch(failure => { if (!controller.signal.aborted) setError(errorMessage(failure)); });
+    return () => controller.abort();
   }, []);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const credentials = Object.fromEntries(new FormData(event.currentTarget));
     setBusy(true); setError('');
-    try { onLogin(await api<Operator>('/auth/login', { method: 'POST', body: JSON.stringify(credentials) })); }
+    const tenantId = credentials.tenant_id === 'platform' ? null : credentials.tenant_id;
+    try { onLogin(await api<Operator>('/auth/login', { method: 'POST', body: JSON.stringify({ ...credentials, tenant_id: tenantId }) })); }
     catch (failure) { setError(errorMessage(failure)); }
     finally { setBusy(false); }
   }
   return <main className="grid min-h-dvh place-items-center bg-slate-100 p-6 text-slate-900">
     <form onSubmit={submit} className="grid w-full max-w-md gap-5 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
       <header><h1><Image src={logo} alt="Nexus Atende" className="h-auto w-64 max-w-full rounded-lg" unoptimized /></h1><p className="mt-3 text-slate-600">Acesse o painel de atendimento.</p></header>
-      <label className="grid gap-2 text-sm font-medium">ID da empresa<input required name="tenant_id" value={company} onChange={event => setCompany(event.target.value)} className={fieldStyle} placeholder="UUID da empresa" /></label>
+      <label className="grid gap-2 text-sm font-medium">Empresa<select required name="tenant_id" value={company} onChange={event => setCompany(event.target.value)} className={fieldStyle}>
+        <option value="" disabled>{companies ? 'Selecione a empresa' : 'Selecione o tipo de acesso'}</option>
+        {companies?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        <option value="platform">SuperAdmin</option>
+      </select></label>
       <label className="grid gap-2 text-sm font-medium">E-mail<input required type="email" name="email" autoComplete="username" className={fieldStyle} /></label>
       <label className="grid gap-2 text-sm font-medium">Senha<input required type="password" name="password" autoComplete="current-password" className={fieldStyle} /></label>
       {error && <p role="alert" className="text-red-700">{error}</p>}
@@ -52,7 +64,7 @@ export function Workspace() {
   const [rows, setRows] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<string>();
   const [revision, setRevision] = useState(0);
-  const [view, setView] = useState<'inbox' | 'settings' | 'password'>('inbox');
+  const [view, setView] = useState<'inbox' | 'settings' | 'password' | 'clients'>('inbox');
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
   const refresh = () => setRevision(value => value + 1);
@@ -105,12 +117,13 @@ export function Workspace() {
       <nav aria-label="Área de trabalho" className="flex flex-wrap items-center gap-4 text-sm">
         <button className="underline" onClick={() => setView('inbox')}>Atendimento</button>
         {operator.role === 'admin' && <button className="underline" onClick={() => setView('settings')}>Configurações</button>}
+        {operator.platform_admin && <button className="underline" onClick={() => setView('clients')}>Clientes</button>}
         <button className="underline" onClick={() => setView('password')}>Alterar senha</button>
         <p>{operator.name}</p><button className="underline" onClick={logout}>Sair</button>
       </nav>
     </header>
     {error && <p role="alert" className="bg-red-50 px-5 py-2 text-red-800">{error}</p>}
-    {view === 'password' ? <PasswordSettings /> : view === 'settings' ? <Settings /> : <section className="mx-auto grid max-w-screen-2xl gap-4 p-4 md:min-h-[calc(100dvh-3.75rem)] md:grid-cols-[20rem_minmax(0,1fr)]" aria-label="Caixa de entrada">
+    {view === 'password' ? <PasswordSettings /> : view === 'clients' && operator.platform_admin ? <ClientSettings platformTenant={operator.tenant_id} /> : view === 'settings' ? <Settings platformAdmin={operator.platform_admin} /> : <section className="mx-auto grid max-w-screen-2xl gap-4 p-4 md:min-h-[calc(100dvh-3.75rem)] md:grid-cols-[20rem_minmax(0,1fr)]" aria-label="Caixa de entrada">
       <aside className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
         <header className="grid gap-2 border-b border-slate-200 p-4"><h2 className="text-lg font-semibold">Conversas</h2>
           <p className="text-xs text-slate-600">{connected ? 'Atualizações ao vivo' : 'Atualização periódica'}</p>

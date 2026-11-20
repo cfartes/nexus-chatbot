@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.api.routes.auth import router as auth_router
+from src.api.routes.clients import router as clients_router
 from src.api.routes.conversations import router as conversations_router
 from src.api.routes.health import router as health_router
 from src.api.routes.integrations import router as integrations_router
@@ -27,6 +28,7 @@ from src.repositories.operators import OperatorRepository
 from src.repositories.tenants import TenantRepository
 from src.services.auth import AuthService
 from src.services.bot import BotService
+from src.services.clients import ClientService
 from src.services.conversations import ConversationService
 from src.services.events import ConversationEvents
 from src.services.knowledge import KnowledgeService
@@ -49,8 +51,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.integrations = integrations
         application.state.tenant_repository = tenants
         application.state.whatsapp_service = WhatsAppService(tenants, integrations)
-        application.state.auth_service = AuthService(AuthRepository(engine))
-        application.state.operator_service = OperatorService(OperatorRepository(engine), integrations, settings.public_origin)
+        application.state.auth_service = AuthService(AuthRepository(engine), settings.openwa_webhook_tenant_id)
+        operators = OperatorService(OperatorRepository(engine), integrations, settings.public_origin)
+        application.state.operator_service = operators
+        application.state.client_service = ClientService(tenants, operators, settings.openwa_webhook_tenant_id)
         application.state.conversation_service = ConversationService(
             ConversationRepository(engine), OutgoingMessageRepository(engine), BotRepository(engine), integrations,
         )
@@ -71,6 +75,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Nexus Atende", lifespan=lifespan)
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(clients_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(integrations_router, prefix="/api/v1")

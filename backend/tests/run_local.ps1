@@ -32,6 +32,7 @@ INSERT INTO nexus_atende.users (tenant_id, email, name, password_hash, role) VAL
 ('00000000-0000-0000-0000-000000000001', 'admin@example.test', 'Admin Nexus', '$passwordHash', 'admin'),
 ('00000000-0000-0000-0000-000000000001', 'first@example.test', 'Primeiro', '$passwordHash', 'operator'),
 ('00000000-0000-0000-0000-000000000001', 'second@example.test', 'Segundo', '$passwordHash', 'operator');
+UPDATE nexus_atende.users SET platform_admin = true WHERE email = 'admin@example.test';
 "@ | docker exec -i $container psql -U postgres -v ON_ERROR_STOP=1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar os dados de teste.' }
 

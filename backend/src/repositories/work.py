@@ -37,6 +37,11 @@ class WorkRepository:
 
     async def claim(self, tenant_id: UUID, email_enabled: bool, whatsapp_enabled: bool) -> WorkItem | None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
+            enabled = await connection.scalar(text("""
+                SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND archived_at IS NULL FOR SHARE
+            """), {"tenant_id": tenant_id})
+            if enabled is None:
+                return None
             await connection.execute(text("""
                 WITH expired AS (
                     SELECT id FROM nexus_atende.work_items

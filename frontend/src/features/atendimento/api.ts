@@ -1,5 +1,5 @@
 export type Queue = 'waiting' | 'bot' | 'mine' | 'assigned';
-export interface Operator { id: string; name: string; tenant_id: string; role: 'admin' | 'operator' }
+export interface Operator { id: string; name: string; tenant_id: string; role: 'admin' | 'operator'; platform_admin: boolean }
 export interface Conversation {
   id: string; chat_id: string; customer_name: string | null; state: 'waiting' | 'bot' | 'assigned';
   assigned_user_id: string | null; last_interaction: string; origin_name: string | null;

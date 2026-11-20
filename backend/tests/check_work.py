@@ -2,11 +2,12 @@ import asyncio
 from email.message import Message
 import json
 import os
+from http.cookies import SimpleCookie
 from hmac import digest
 from io import BytesIO
 from urllib.error import HTTPError
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zipfile import ZipFile
 
 from cryptography.fernet import Fernet
@@ -21,7 +22,7 @@ from src.repositories.database import tenant_transaction
 from src.repositories.events import EventRepository
 from src.repositories.integrations import IntegrationRepository
 from src.schemas.integrations import OpenWASettings
-from src.services.integrations import IntegrationService
+from src.services.integrations import IntegrationService, tenant_webhook_secret
 from src.settings import Settings
 from src.worker import Worker
 from tests.check_auth import request
@@ -326,6 +327,59 @@ async def check() -> None:
             assert status == 200 and json.loads(wrong_connection)["status"] == "WRONG_NUMBER"
             async with tenant_transaction(engine, TENANT) as connection:
                 assert await connection.scalar(text("SELECT openwa_number_verified FROM nexus_atende.tenants")) is False
+
+            assert (await request("GET", "", headers=third, prefix="clients"))[0] == 403
+            client_data = {"name": "Cliente Piloto", "admin": {"name": "Admin Piloto", "email": "pilot@example.test"}}
+            with patch("src.services.resend.request_json", return_value={"id": "client-invite"}) as email:
+                status, created_client = await call("clients", "POST", "", client_data)
+            assert status == 201, created_client
+            assert email.call_args.args[2]["to"] == ["pilot@example.test"]
+            assert email.call_args.args[2]["from"] == "from@example.test"
+            client_id = json.loads(created_client)["id"]
+            token = email.call_args.args[2]["text"].split("#")[-1]
+            assert (await call("operators", "POST", "accept-invite", {"token": token, "password": "test-password-123"}))[0] == 204
+            origin_header = next(header for header in admin if header[0] == b"origin")
+            credentials = {"email": "pilot@example.test", "password": "test-password-123"}
+            assert (await request("POST", "login", json.dumps(credentials).encode(), (origin_header,)))[0] == 401
+            pilot_login = json.dumps({**credentials, "tenant_id": client_id}).encode()
+            status, pilot_headers, pilot_body = await request("POST", "login", pilot_login, (origin_header,))
+            assert status == 200 and json.loads(pilot_body)["platform_admin"] is False
+            pilot_cookies = SimpleCookie()
+            for name, value in pilot_headers:
+                if name == b"set-cookie":
+                    pilot_cookies.load(value.decode())
+            pilot = ((b"cookie", f"nexus_atende_session={pilot_cookies['nexus_atende_session'].value}".encode()),
+                     (b"x-csrf-token", pilot_cookies["nexus_atende_csrf"].value.encode()), origin_header)
+            assert (await request("GET", "", headers=pilot, prefix="clients"))[0] == 403
+            assert (await request("PUT", "ai", b'{"provider":"openai","model":"test"}', pilot, prefix="integrations"))[0] == 403
+            assert (await request("GET", "connection", headers=pilot, prefix="whatsapp"))[0] == 200
+            pilot_tenant = UUID(client_id)
+            pilot_session = uuid4()
+            async with tenant_transaction(engine, pilot_tenant) as connection:
+                await connection.execute(text("""
+                    UPDATE nexus_atende.tenants SET openwa_session_id = :session, openwa_number_verified = true
+                    WHERE id = :tenant
+                """), {"session": pilot_session, "tenant": pilot_tenant})
+            pilot_event = json.dumps({"event": "message.received", "sessionId": str(pilot_session), "data": {
+                "id": "pilot-message", "from": "5511888888888@c.us", "fromMe": False, "body": "Olá",
+            }}).encode()
+            key = tenant_webhook_secret(TENANT, pilot_tenant, SecretStr(SECRET)).get_secret_value()
+            pilot_signature = (b"x-openwa-signature", b"sha256=" + digest(key.encode(), pilot_event, "sha256").hex().encode())
+            assert (await request("POST", client_id, pilot_event, (pilot_signature,), prefix="webhooks/openwa"))[0] == 204
+            ar = b'{"email":"admin@example.test","password":"test-password-123"}'
+            status, _, platform = await request("POST", "login", ar, (origin_header,))
+            assert status == 200 and json.loads(platform)["platform_admin"] is True
+            assert (await call("clients", "DELETE", str(TENANT)))[0] == 422
+            assert (await call("clients", "PUT", client_id, {"name": "Piloto atualizado"}))[0] == 204
+            assert (await call("clients", "DELETE", client_id))[0] == 204
+            assert (await request("GET", "me", headers=pilot))[0] == 401
+            assert (await request("POST", "login", pilot_login, (origin_header,)))[0] == 401
+            assert client_id.encode() not in (await request("GET", "companies"))[2]
+            archived = next(row for row in json.loads((await call("clients", "GET", ""))[1]) if row["id"] == client_id)
+            assert archived["archived_at"] and archived["name"] == "Piloto atualizado"
+            async with tenant_transaction(engine, pilot_tenant) as connection:
+                assert await connection.scalar(text("SELECT count(*) FROM nexus_atende.messages")) == 1
+                assert await connection.scalar(text("SELECT status FROM nexus_atende.work_items")) == "cancelled"
     finally:
         await engine.dispose()
 

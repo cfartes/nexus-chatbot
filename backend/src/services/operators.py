@@ -25,7 +25,7 @@ class OperatorService:
         name = operator.name.strip()
         if not name:
             raise ValueError("Informe o nome")
-        resend, origin = await self._invitation_sender(tenant_id)
+        resend, origin = await self.invitation_sender(tenant_id)
         token = f"{tenant_id}.{token_urlsafe(32)}"
         invite_hash = sha256(token.encode()).hexdigest()
         member = await self._repository.create(tenant_id, name, operator.email.lower(), invite_hash)
@@ -33,7 +33,7 @@ class OperatorService:
             await self._send_invitation(member, resend, f"{origin}/convite#{token}", invite_hash)
         return member
 
-    async def _invitation_sender(self, tenant_id: UUID) -> tuple[ResendClient, str]:
+    async def invitation_sender(self, tenant_id: UUID) -> tuple[ResendClient, str]:
         origin = self._origin or ""
         parsed = urlsplit(origin)
         loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
@@ -47,7 +47,7 @@ class OperatorService:
         return resend, origin
 
     async def renew(self, tenant_id: UUID, user_id: UUID) -> OperatorRecord | None:
-        resend, origin = await self._invitation_sender(tenant_id)
+        resend, origin = await self.invitation_sender(tenant_id)
         token = f"{tenant_id}.{token_urlsafe(32)}"
         invite_hash = sha256(token.encode()).hexdigest()
         member = await self._repository.renew(tenant_id, user_id, invite_hash)

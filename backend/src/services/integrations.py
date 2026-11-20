@@ -1,4 +1,5 @@
 from urllib.parse import urlsplit
+from hmac import digest
 from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -50,9 +51,11 @@ class IntegrationService:
             raise IntegrationUnavailable from None
 
     async def view(self, tenant_id: UUID) -> IntegrationsView:
-        saved = await self._repository.get(tenant_id)
-        endpoint = saved.openwa_url or self._openwa_url
-        has_openwa_key = bool(saved.openwa_key or self._settings.openwa_api_key)
+        local = await self._repository.get(tenant_id)
+        shared_id = self._shared_tenant(tenant_id)
+        saved = local if shared_id == tenant_id else await self._repository.get(shared_id)
+        endpoint = local.openwa_url or self._openwa_url
+        has_openwa_key = bool(local.openwa_key or self._settings.openwa_api_key)
         webhook_configured = endpoint in self._openwa_allowed and has_openwa_key and self.webhook_url(tenant_id) is not None
         return IntegrationsView(provider=saved.provider or "openai", model=saved.model or self._settings.openai_model,
             embedding_model=saved.embedding_model or "nomic-embed-text",
@@ -61,20 +64,24 @@ class IntegrationService:
             resend_sender=saved.sender if saved.sender is not None else self._settings.resend_from or "",
             resend_recipient=saved.recipient if saved.recipient is not None else self._settings.resend_to or "",
             resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=endpoint,
-            openwa_webhook_status=saved.openwa_webhook_status if webhook_configured else "not_configured",
+            openwa_webhook_status=local.openwa_webhook_status if webhook_configured else "not_configured",
             openwa_has_key=has_openwa_key)
 
     def webhook_url(self, tenant_id: UUID) -> str | None:
         origin = self._settings.public_origin
-        if not origin or self._settings.openwa_webhook_tenant_id != tenant_id or not self._settings.openwa_webhook_secret:
+        if not origin or not self._settings.openwa_webhook_secret:
             return None
         parsed = urlsplit(origin)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
             return None
         return f"{origin.rstrip('/')}/api/v1/webhooks/openwa/{tenant_id}"
 
+    def _shared_tenant(self, tenant_id: UUID) -> UUID:
+        return self._settings.openwa_webhook_tenant_id or tenant_id
+
     async def save_ai(self, tenant_id: UUID, config: AISettings) -> IntegrationsView:
-        saved = await self._repository.get(tenant_id)
+        shared_id = self._shared_tenant(tenant_id)
+        saved = await self._repository.get(shared_id)
         changes: dict[str, str | None] = {"provider": config.provider, "model": config.model, "embedding_model": config.embedding_model}
         if config.provider == "ollama":
             if not self._ollama_url:
@@ -90,17 +97,18 @@ class IntegrationService:
             raise ValueError("Informe uma chave OpenAI para os embeddings do RAG")
         if config.embedding_key:
             changes["embedding_key"] = self._encrypt(config.embedding_key)
-        await self._repository.save(tenant_id, changes)
+        await self._repository.save(shared_id, changes)
         return await self.view(tenant_id)
 
     async def save_resend(self, tenant_id: UUID, config: ResendSettings) -> IntegrationsView:
-        saved = await self._repository.get(tenant_id)
+        shared_id = self._shared_tenant(tenant_id)
+        saved = await self._repository.get(shared_id)
         if not config.sender.strip() or not (config.api_key or saved.resend_key or self._settings.resend_api_key):
             raise ValueError("Informe o remetente verificado e a chave do Resend")
         changes: dict[str, str | None] = {"sender": config.sender.strip(), "recipient": config.recipient.strip()}
         if config.api_key:
             changes["resend_key"] = self._encrypt(config.api_key)
-        await self._repository.save(tenant_id, changes)
+        await self._repository.save(shared_id, changes)
         return await self.view(tenant_id)
 
     async def save_openwa(self, tenant_id: UUID, config: OpenWASettings) -> IntegrationsView:
@@ -129,7 +137,7 @@ class IntegrationService:
 
     async def ai(self, tenant_id: UUID) -> OpenAIClient | None:
         try:
-            return self._ai(await self._repository.get(tenant_id))
+            return self._ai(await self._repository.get(self._shared_tenant(tenant_id)))
         except IntegrationUnavailable:
             return None
 
@@ -137,7 +145,7 @@ class IntegrationService:
         return await self.ai(tenant_id) is not None
 
     async def resend(self, tenant_id: UUID) -> ResendClient | None:
-        saved = await self._repository.get(tenant_id)
+        saved = await self._repository.get(self._shared_tenant(tenant_id))
         try:
             key = self._decrypt(saved.resend_key) or self._settings.resend_api_key
         except IntegrationUnavailable:
@@ -156,3 +164,9 @@ class IntegrationService:
         except IntegrationUnavailable:
             return None
         return OpenWAClient(endpoint, key) if key else None
+
+
+def tenant_webhook_secret(root_tenant: UUID, tenant_id: UUID, secret: SecretStr) -> SecretStr:
+    if tenant_id == root_tenant:
+        return secret
+    return SecretStr(digest(secret.get_secret_value().encode(), f"openwa:{tenant_id}".encode(), "sha256").hex())

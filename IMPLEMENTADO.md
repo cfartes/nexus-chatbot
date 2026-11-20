@@ -132,6 +132,10 @@ O logo fornecido para o Nexus Atende aparece no login e no cabeçalho do painel 
 
 Administradores e operadores podem alterar a própria senha no menu superior. A API exige a senha atual e encerra as demais sessões da conta após a alteração.
 
+Na tela de login, selecione uma empresa ativa ou **SuperAdmin** e informe o e-mail e a senha. O instalador habilita o acesso de SuperAdmin para o administrador inicial da Nexus e conserva a senha atual. O SuperAdmin configura IA e Resend para toda a plataforma e gerencia empresas no menu **Clientes**. Ao cadastrar uma empresa, o Resend envia um convite ao administrador inicial para definir a senha.
+
+Cada administrador de cliente mantém o WhatsApp, operadores e base de conhecimento da própria empresa. Arquivar um cliente remove a empresa do login, encerra suas sessões, cancela trabalhos pendentes e preserva o histórico. A empresa principal da plataforma fica protegida do arquivamento.
+
 Os cartões de Configurações indicam se faltam dados, se há uma configuração parcial ou falha conhecida, ou se os campos necessários estão preenchidos. A cor da configuração não substitui um teste real do provedor.
 
 Com a API em `http://127.0.0.1:8085`, configure `NEXUS_ATENDE_PUBLIC_ORIGIN=http://127.0.0.1:3000` no backend local. Em `frontend`, execute `corepack pnpm install --frozen-lockfile` e `corepack pnpm dev --hostname 127.0.0.1`. Acesse `http://127.0.0.1:3000`. Defina `NEXUS_ATENDE_API_URL` no ambiente do Next.js para usar outro endereço de API. O navegador usa rotas de mesma origem para sessão e SSE.

@@ -15,7 +15,7 @@ from src.repositories.outgoing_messages import OutgoingMessageRepository
 from src.repositories.tenants import TenantRepository
 from src.repositories.work import WorkRepository
 from src.services.bot import BotService
-from src.services.integrations import IntegrationService
+from src.services.integrations import IntegrationService, tenant_webhook_secret
 from src.services.openwa import OpenWAUnavailable
 from src.settings import Settings
 
@@ -28,7 +28,8 @@ class Worker:
         self._repository = IntegrationRepository(engine)
         self._integrations = IntegrationService(self._repository, settings)
         self._tenants = TenantRepository(engine)
-        self._webhook_secret = settings.openwa_webhook_secret
+        credentials = settings.webhook_credentials()
+        self._webhook_secret = tenant_webhook_secret(credentials[0], tenant_id, credentials[1]) if credentials else None
         self._work = WorkRepository(engine)
         self._outgoing = OutgoingMessageRepository(engine)
         self._bot = BotService(BotRepository(engine), KnowledgeRepository(engine), self._integrations)
@@ -84,19 +85,26 @@ async def run() -> None:
     engine = create_async_engine(settings.runtime_database_url(), pool_pre_ping=True, hide_parameters=True)
     try:
         await verify_runtime_access(engine)
-        worker = Worker(engine, settings, tenant_id)
+        tenants = TenantRepository(engine)
+        workers: dict[UUID, Worker] = {}
         auth = AuthRepository(engine)
+        next_refresh = 0.0
         next_cleanup = 0.0
-        next_webhook = 0.0
         while True:
             try:
+                if monotonic() >= next_refresh:
+                    active = [client.id for client in await tenants.clients() if client.archived_at is None]
+                    workers = {client_id: workers[client_id] if client_id in workers else Worker(engine, settings, client_id)
+                               for client_id in active}
+                    next_refresh = monotonic() + 60
+                    for worker in workers.values():
+                        await worker.sync_webhook()
                 if monotonic() >= next_cleanup:
-                    await auth.prune(tenant_id)
+                    for client_id in workers:
+                        await auth.prune(client_id)
                     next_cleanup = monotonic() + 3600
-                if monotonic() >= next_webhook:
-                    next_webhook = monotonic() + 60
-                    await worker.sync_webhook()
-                if await worker.run_once():
+                processed = [await worker.run_once() for worker in workers.values()]
+                if any(processed):
                     continue
             except SQLAlchemyError as error:
                 logger.error("Worker database operation failed (%s)", type(error).__name__)

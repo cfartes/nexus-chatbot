@@ -7,10 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
-from src.schemas.tenants import TenantConnection
+from src.schemas.tenants import ClientChoice, ClientCreate, ClientRecord, TenantConnection
 
 
 class PhoneInUse(Exception):
+    pass
+
+
+class ClientConflict(Exception):
     pass
 
 
@@ -18,13 +22,63 @@ class TenantRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
+    async def clients(self) -> list[ClientRecord]:
+        async with self._engine.connect() as connection:
+            rows = await connection.execute(text("SELECT * FROM nexus_atende.client_registry()"))
+            return [ClientRecord.model_validate(row) for row in rows.mappings()]
+
+    async def active_choices(self) -> list[ClientChoice]:
+        async with self._engine.connect() as connection:
+            rows = await connection.execute(text("SELECT id, name FROM nexus_atende.client_registry() WHERE archived_at IS NULL"))
+            return [ClientChoice.model_validate(row) for row in rows.mappings()]
+
+    async def create_client(self, tenant_id: UUID, content: ClientCreate, invite_hash: str) -> None:
+        try:
+            async with tenant_transaction(self._engine, tenant_id) as connection:
+                await connection.execute(text("INSERT INTO nexus_atende.tenants (id, name) VALUES (:id, :name)"),
+                                         {"id": tenant_id, "name": content.name})
+                await connection.execute(text("""
+                    INSERT INTO nexus_atende.users (tenant_id, name, email, password_hash, role, is_active, invite_hash, invite_expires)
+                    VALUES (:id, :name, :email, '', 'admin', false, :invite_hash, now() + interval '24 hours')
+                """), {"id": tenant_id, "name": content.admin.name, "email": content.admin.email, "invite_hash": invite_hash})
+        except IntegrityError as error:
+            if getattr(error.orig, "sqlstate", None) == "23505":
+                raise ClientConflict from None
+            raise
+
+    async def renew_admin(self, tenant_id: UUID, invite_hash: str) -> str | None:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            email: str | None = await connection.scalar(text("""
+                UPDATE nexus_atende.users SET invite_hash = :invite_hash, invite_expires = now() + interval '24 hours'
+                WHERE tenant_id = :id AND role = 'admin' AND password_hash = '' AND NOT platform_admin
+                    AND EXISTS (SELECT 1 FROM nexus_atende.tenants WHERE id = :id AND archived_at IS NULL FOR SHARE)
+                RETURNING email
+            """), {"id": tenant_id, "invite_hash": invite_hash})
+            return email
+
+    async def update_client(self, tenant_id: UUID, name: str | None) -> bool:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            values = {"id": tenant_id, "name": name}
+            changed = await connection.scalar(text("""
+                UPDATE nexus_atende.tenants SET name = coalesce(:name, name),
+                    archived_at = CASE WHEN :name IS NULL THEN now() ELSE archived_at END
+                WHERE id = :id AND archived_at IS NULL RETURNING id
+            """), values)
+            if changed is not None and name is None:
+                await connection.execute(text("DELETE FROM nexus_atende.sessions WHERE tenant_id = :id"), values)
+                await connection.execute(text("""
+                    UPDATE nexus_atende.work_items SET status = 'cancelled'
+                    WHERE tenant_id = :id AND status IN ('pending', 'processing')
+                """), values)
+            return changed is not None
+
     async def update_phone(self, tenant_id: UUID, phone: str) -> None:
         try:
             async with tenant_transaction(self._engine, tenant_id) as connection:
                 await connection.execute(text("""
                     UPDATE nexus_atende.tenants SET phone_number = :phone,
                         openwa_number_verified = openwa_number_verified AND phone_number IS NOT DISTINCT FROM :phone
-                    WHERE id = :tenant_id
+                    WHERE id = :tenant_id AND archived_at IS NULL
                 """), {"tenant_id": tenant_id, "phone": phone})
         except IntegrityError as error:
             if getattr(error.orig, "sqlstate", None) == "23505":
@@ -37,7 +91,7 @@ class TenantRepository:
                 text("""
                     SELECT id, phone_number, openwa_session_id, openwa_number_verified
                     FROM nexus_atende.tenants
-                    WHERE id = :tenant_id
+                    WHERE id = :tenant_id AND archived_at IS NULL
                 """),
                 {"tenant_id": tenant_id},
             )
@@ -55,7 +109,7 @@ class TenantRepository:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             bound = await connection.scalar(text("""
                 UPDATE nexus_atende.tenants SET openwa_session_id = :session_id, openwa_number_verified = false
-                WHERE id = :tenant_id AND phone_number = :phone AND openwa_session_id IS NULL RETURNING id
+                WHERE id = :tenant_id AND phone_number = :phone AND openwa_session_id IS NULL AND archived_at IS NULL RETURNING id
             """), {"tenant_id": tenant_id, "session_id": session_id, "phone": phone})
             return bound is not None
 
@@ -63,6 +117,6 @@ class TenantRepository:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             checked = await connection.scalar(text("""
                 UPDATE nexus_atende.tenants SET openwa_number_verified = :verified
-                WHERE id = :tenant_id AND phone_number = :phone AND openwa_session_id = :session_id RETURNING id
+                WHERE id = :tenant_id AND phone_number = :phone AND openwa_session_id = :session_id AND archived_at IS NULL RETURNING id
             """), {"tenant_id": tenant_id, "session_id": session_id, "phone": phone, "verified": verified})
             return checked is not None

@@ -43,7 +43,8 @@ class OperatorRepository:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             return await connection.scalar(text("""
                 SELECT id FROM nexus_atende.users WHERE tenant_id = :tenant_id AND invite_hash = :invite_hash
-                    AND invite_expires > now() AND role = 'operator' AND password_hash = ''
+                    AND invite_expires > now() AND NOT platform_admin AND password_hash = ''
+                    AND EXISTS (SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND archived_at IS NULL)
             """), {"tenant_id": tenant_id, "invite_hash": invite_hash}) is not None
 
     async def accept(self, tenant_id: UUID, invite_hash: str, password_hash: str) -> bool:
@@ -52,7 +53,9 @@ class OperatorRepository:
                 UPDATE nexus_atende.users SET is_active = true, password_hash = :password_hash,
                     invite_hash = NULL, invite_expires = NULL
                 WHERE tenant_id = :tenant_id AND invite_hash = :invite_hash AND invite_expires > now()
-                    AND role = 'operator' AND password_hash = '' RETURNING id
+                    AND NOT platform_admin AND password_hash = ''
+                    AND EXISTS (SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND archived_at IS NULL FOR SHARE)
+                RETURNING id
             """), {"tenant_id": tenant_id, "invite_hash": invite_hash, "password_hash": password_hash})
             return activated is not None
 

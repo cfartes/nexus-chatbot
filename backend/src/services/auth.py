@@ -32,20 +32,22 @@ def valid_csrf(session: str, csrf: str) -> bool:
 
 
 class AuthService:
-    def __init__(self, repository: AuthRepository) -> None:
+    def __init__(self, repository: AuthRepository, platform_tenant: UUID | None = None) -> None:
         self._repository = repository
+        self._platform_tenant = platform_tenant
         self._password_slots = Semaphore(2)
 
     async def login(self, credentials: LoginRequest, ip: str) -> tuple[Operator, str]:
         email = credentials.email.strip().lower()
-        identity_key = _digest(f"identity:{credentials.tenant_id}:{email}")
+        tenant_id = credentials.tenant_id or self._platform_tenant
+        identity_key = _digest(f"identity:{tenant_id}:{email}")
         if not await self._repository.record_attempt(_digest(f"ip:{ip}"), identity_key):
             raise LoginLimited
-        identity = await self._repository.find_identity(credentials.tenant_id, email)
+        identity = await self._repository.find_identity(tenant_id, email) if tenant_id else None
         stored = identity.password_hash.get_secret_value() if identity else _DUMMY_HASH
         async with self._password_slots:
             valid = await to_thread(verify_password, credentials.password.get_secret_value(), stored)
-        if not valid or identity is None:
+        if not valid or identity is None or (credentials.tenant_id is None and not identity.platform_admin):
             raise InvalidLogin
         operator = Operator.model_validate(identity.model_dump())
         session = f"{operator.tenant_id}.{token_urlsafe(32)}"

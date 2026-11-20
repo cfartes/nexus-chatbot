@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, SecretStr
 
 
 class LoginRequest(BaseModel):
-    tenant_id: UUID
+    tenant_id: UUID | None = None
     email: str = Field(min_length=1, max_length=150)
     password: SecretStr = Field(min_length=1, max_length=128)
 
@@ -15,6 +15,7 @@ class Operator(BaseModel):
     id: UUID
     name: str
     role: Literal["admin", "operator"]
+    platform_admin: bool = False
 
 
 class PasswordChange(BaseModel):

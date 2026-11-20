@@ -82,17 +82,26 @@ def bootstrap(compose: tuple[str, ...], values: dict[str, str]) -> None:
         COMMIT;
     """)
     admin = output(*psql, "-Atc", f"SELECT 1 FROM nexus_atende.users WHERE tenant_id = '{tenant}' AND role = 'admin' LIMIT 1")
-    if admin:
+    if admin and output(*psql, "-Atc", f"SELECT 1 FROM nexus_atende.users WHERE tenant_id = '{tenant}' AND platform_admin AND is_active LIMIT 1"):
         return
     company, email, initial_password = (line.split(": ", 1)[1] for line in ADMIN_FILE.read_text(encoding="utf-8").splitlines())
     if company != tenant or not re.fullmatch(r"[^\s@]+@[^\s@]+", email):
         raise ValueError("Dados do administrador inicial incompatíveis com a empresa configurada.")
+    if admin:
+        promoted = output(*psql, "-Atc", f"""
+            UPDATE nexus_atende.users SET platform_admin = true
+            WHERE tenant_id = '{tenant}' AND lower(email) = {sql_string(email.lower())} AND role = 'admin' AND is_active
+            RETURNING 1;
+        """)
+        if not promoted:
+            raise ValueError("O administrador inicial ativo não foi encontrado para habilitar o SuperAdmin.")
+        return
     hashed = output(*compose, "run", "--rm", "--no-deps", "-T", "--label", "traefik.enable=false", "api", "python", "-c",
                     "import sys; from src.services.passwords import hash_password; print(hash_password(sys.stdin.read()))",
                     input=initial_password)
     run(*psql, input=f"""
-        INSERT INTO nexus_atende.users (tenant_id, name, email, password_hash, role)
-        VALUES ('{tenant}', 'Administrador Nexus', {sql_string(email)}, {sql_string(hashed)}, 'admin');
+        INSERT INTO nexus_atende.users (tenant_id, name, email, password_hash, role, platform_admin)
+        VALUES ('{tenant}', 'Administrador Nexus', {sql_string(email)}, {sql_string(hashed)}, 'admin', true);
     """)
 
 

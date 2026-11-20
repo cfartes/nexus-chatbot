@@ -38,8 +38,9 @@ class AuthRepository:
     async def find_identity(self, tenant_id: UUID, email: str) -> LoginIdentity | None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             result = await connection.execute(text("""
-                SELECT tenant_id, id, name, role, password_hash
+                SELECT tenant_id, id, name, role, platform_admin, password_hash
                 FROM nexus_atende.users WHERE tenant_id = :tenant_id AND lower(email) = :email AND is_active
+                    AND EXISTS (SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND archived_at IS NULL)
             """), {"tenant_id": tenant_id, "email": email})
             row = result.mappings().one_or_none()
             return LoginIdentity.model_validate(row) if row is not None else None
@@ -50,6 +51,7 @@ class AuthRepository:
                 INSERT INTO nexus_atende.sessions (tenant_id, user_id, token_hash)
                 SELECT tenant_id, id, :token_hash FROM nexus_atende.users
                 WHERE tenant_id = :tenant_id AND id = :user_id AND is_active AND password_hash = :password_hash
+                    AND EXISTS (SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND archived_at IS NULL FOR SHARE)
                 FOR SHARE RETURNING token_hash
             """), {"tenant_id": operator.tenant_id, "user_id": operator.id,
                     "token_hash": token_hash, "password_hash": password_hash})
@@ -58,11 +60,12 @@ class AuthRepository:
     async def find_session(self, tenant_id: UUID, token_hash: str) -> Operator | None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             result = await connection.execute(text("""
-                SELECT users.tenant_id, users.id, users.name, users.role
+                SELECT users.tenant_id, users.id, users.name, users.role, users.platform_admin
                 FROM nexus_atende.sessions AS sessions JOIN nexus_atende.users AS users
                     ON (users.tenant_id, users.id) = (sessions.tenant_id, sessions.user_id)
                 WHERE sessions.tenant_id = :tenant_id AND sessions.token_hash = :token_hash
                     AND sessions.expires_at > now() AND users.is_active
+                    AND EXISTS (SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND archived_at IS NULL)
             """), {"tenant_id": tenant_id, "token_hash": token_hash})
             row = result.mappings().one_or_none()
             return Operator.model_validate(row) if row is not None else None

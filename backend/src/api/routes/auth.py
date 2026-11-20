@@ -3,6 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from src.schemas.auth import LoginRequest, Operator, PasswordChange
+from src.schemas.tenants import ClientChoice
+from src.repositories.tenants import TenantRepository
 from src.services.auth import SESSION_SECONDS, AuthService, InvalidLogin, LoginLimited, csrf_token, valid_csrf
 
 router = APIRouter(prefix="/auth")
@@ -46,6 +48,16 @@ async def administrator_mutation(actor: Annotated[Operator, Depends(mutation_ope
     return await administrator(actor)
 
 
+async def superadministrator(actor: Annotated[Operator, Depends(authenticated_operator)]) -> Operator:
+    if not actor.platform_admin:
+        raise HTTPException(403, "Acesso restrito ao SuperAdmin")
+    return actor
+
+
+async def superadministrator_mutation(actor: Annotated[Operator, Depends(mutation_operator)]) -> Operator:
+    return await superadministrator(actor)
+
+
 @router.post("/login", response_model=Operator)
 async def login(credentials: LoginRequest, request: Request, response: Response) -> Operator:
     check_origin(request)
@@ -67,6 +79,13 @@ async def login(credentials: LoginRequest, request: Request, response: Response)
 async def current_operator(request: Request, response: Response) -> Operator:
     response.headers["Cache-Control"] = "no-store"
     return await authenticated_operator(request)
+
+
+@router.get("/companies")
+async def companies(request: Request, response: Response) -> list[ClientChoice]:
+    repository: TenantRepository = request.app.state.tenant_repository
+    response.headers["Cache-Control"] = "no-store"
+    return await repository.active_choices()
 
 
 @router.post("/logout", status_code=204)
