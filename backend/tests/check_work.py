@@ -220,7 +220,10 @@ async def check() -> None:
             rejected = HTTPError("https://api.resend.com/emails", 403, "test", hdrs=Message(), fp=None)
             with patch("src.services.resend.request_json", side_effect=rejected):
                 status, failure = await call("integrations", "POST", "resend/test")
-                assert status == 502 and b"403" in failure
+                assert status == 424 and b"403" in failure
+            with patch("src.services.resend.request_json", side_effect=TimeoutError):
+                status, failure = await call("integrations", "POST", "resend/test")
+                assert status == 424 and b"api.resend.com" in failure
             assert (await call("integrations", "GET", "", admin_only=False))[0] == 403
             assert (await call("integrations", "PUT", "openwa", {"api_key": "openwa-test-secret"}))[0] == 200
             endpoint = "https://secondary-openwa.example.test/api"

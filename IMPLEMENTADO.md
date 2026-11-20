@@ -68,6 +68,8 @@ Use **Iniciar pareamento** depois de salvar o telefone e a chave do OpenWA. Com 
 
 Use **Enviar e-mail de teste** no cartão Resend para verificar se o provedor aceita um e-mail ao destinatário salvo. Se o Resend recusar um teste ou convite, o painel mostra o código HTTP e orienta o administrador a verificar a configuração. O log registra o código da recusa.
 
+O teste retorna HTTP 424 quando a API do Nexus Atende detecta uma falha no Resend. Um 502 genérico no navegador exige verificar também os logs da API e do proxy.
+
 Em **Configurações → Boas-vindas**, o administrador define o texto que abre atendimentos iniciados por contato direto. A IA cumprimenta clientes cadastrados pelo nome e pelo horário de Brasília. Para novos números, pede o nome, grava a resposta e retoma a pergunta inicial, se houver. O botão **Encerrar atendimento** reinicia esse fluxo na próxima mensagem e preserva o histórico e o cadastro do cliente.
 
 Em **Configurações → Origens de contato**, cadastre o nome e o código do produto e copie o link para sua página. A mensagem pré-preenchida identifica o produto. Quem chega por esse link pula a saudação e informa o nome apenas se o número for novo. O atendente pode ver a origem no cabeçalho da conversa.

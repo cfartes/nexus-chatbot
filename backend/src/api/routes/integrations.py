@@ -67,5 +67,5 @@ async def test_resend(actor: Writer, service: Service) -> Response:
     except ValueError as error:
         raise HTTPException(422, str(error)) from None
     except ResendRejected as error:
-        raise HTTPException(502, str(error)) from None
+        raise HTTPException(424, str(error)) from None
     return Response(status_code=204)

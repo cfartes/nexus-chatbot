@@ -1,4 +1,5 @@
 from asyncio import to_thread
+from http.client import HTTPException
 from json import loads
 import logging
 from urllib.error import HTTPError
@@ -29,6 +30,7 @@ class ResendClient:
     async def _send(self, recipient: str, subject: str, content: str, key: str) -> bool:
         response = await to_thread(request_json, "https://api.resend.com/emails", {
             "Authorization": f"Bearer {self._key.get_secret_value()}", "Idempotency-Key": key,
+            "User-Agent": "Nexus-Atende",
         }, {"from": self._sender, "to": [recipient], "subject": subject, "text": content})
         return isinstance(response, dict) and bool(response.get("id"))
 
@@ -50,8 +52,9 @@ class ResendClient:
             logger.warning("Resend rejected email: HTTP %s", error.code)
             message = await to_thread(_rejection_hint, error)
             raise ResendRejected(f"Resend recusou o envio (HTTP {error.code}). {message}") from None
-        except (OSError, ValueError):
-            raise ResendRejected("Não foi possível confirmar o envio no Resend. Confira a conexão e tente novamente.") from None
+        except (OSError, HTTPException, ValueError) as error:
+            logger.warning("Resend email confirmation unavailable (%s)", type(getattr(error, "reason", error)).__name__)
+            raise ResendRejected("O Nexus Atende não recebeu uma confirmação do Resend. Confira a conexão da VPS com api.resend.com.") from None
         if not accepted:
             raise ResendRejected("O Resend não retornou uma confirmação de envio")
 
@@ -64,7 +67,8 @@ class ResendClient:
         except HTTPError as error:
             logger.warning("Resend rejected handoff notification: HTTP %s", error.code)
             return retry if error.code in {408, 409, 429} or error.code >= 500 else "failed"
-        except (OSError, ValueError):
+        except (OSError, HTTPException, ValueError) as error:
+            logger.warning("Resend notification confirmation unavailable (%s)", type(getattr(error, "reason", error)).__name__)
             return retry
         return "sent" if accepted else retry
 
@@ -73,7 +77,7 @@ def _rejection_hint(error: HTTPError) -> str:
     with error:
         try:
             payload: object = loads(error.read(8192))
-        except (OSError, ValueError):
+        except (OSError, HTTPException, ValueError):
             payload = None
     reason = str(payload.get("message", "")).lower() if isinstance(payload, dict) else ""
     if error.code == 403 and "only send testing emails" in reason:
