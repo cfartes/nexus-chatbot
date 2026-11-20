@@ -51,16 +51,27 @@ class IntegrationService:
 
     async def view(self, tenant_id: UUID) -> IntegrationsView:
         saved = await self._repository.get(tenant_id)
+        endpoint = saved.openwa_url or self._openwa_url
+        has_openwa_key = bool(saved.openwa_key or self._settings.openwa_api_key)
+        webhook_configured = endpoint in self._openwa_allowed and has_openwa_key and self.webhook_url(tenant_id) is not None
         return IntegrationsView(provider=saved.provider or "openai", model=saved.model or self._settings.openai_model,
             embedding_model=saved.embedding_model or "nomic-embed-text",
             ai_has_key=bool(saved.ai_key or (saved.provider in (None, "openai") and self._settings.openai_api_key)),
             embedding_has_key=bool(saved.embedding_key or self._settings.openai_api_key), ollama_url=self._ollama_url,
             resend_sender=saved.sender if saved.sender is not None else self._settings.resend_from or "",
             resend_recipient=saved.recipient if saved.recipient is not None else self._settings.resend_to or "",
-            resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=saved.openwa_url or self._openwa_url,
-            openwa_webhook_url=f"{self._settings.public_origin}/api/v1/webhooks/openwa/{tenant_id}"
-                if self._settings.public_origin and self._settings.openwa_webhook_tenant_id == tenant_id else None,
-            openwa_has_key=bool(saved.openwa_key or self._settings.openwa_api_key))
+            resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=endpoint,
+            openwa_webhook_status=saved.openwa_webhook_status if webhook_configured else "not_configured",
+            openwa_has_key=has_openwa_key)
+
+    def webhook_url(self, tenant_id: UUID) -> str | None:
+        origin = self._settings.public_origin
+        if not origin or self._settings.openwa_webhook_tenant_id != tenant_id or not self._settings.openwa_webhook_secret:
+            return None
+        parsed = urlsplit(origin)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            return None
+        return f"{origin.rstrip('/')}/api/v1/webhooks/openwa/{tenant_id}"
 
     async def save_ai(self, tenant_id: UUID, config: AISettings) -> IntegrationsView:
         saved = await self._repository.get(tenant_id)
@@ -99,7 +110,8 @@ class IntegrationService:
         if endpoint and endpoint not in self._openwa_allowed:
             raise ValueError("Este endereço OpenWA ainda não foi autorizado na implantação")
         if config.api_key:
-            await self._repository.save(tenant_id, {"openwa_url": endpoint, "openwa_key": self._encrypt(config.api_key)})
+            await self._repository.save(tenant_id, {"openwa_url": endpoint, "openwa_key": self._encrypt(config.api_key),
+                                                  "openwa_webhook_status": "pending"})
         elif endpoint != current_url or not (saved.openwa_key or self._settings.openwa_api_key):
             raise ValueError("Informe a chave do servidor OpenWA")
         return await self.view(tenant_id)

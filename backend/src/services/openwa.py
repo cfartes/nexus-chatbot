@@ -49,6 +49,30 @@ class OpenWAClient:
         except (URLError, OSError, ValueError, Base64Error):
             raise OpenWAUnavailable from None
 
+    async def ensure_webhook(self, session_id: UUID, url: str, secret: SecretStr) -> None:
+        path = f"/sessions/{session_id}/webhooks"
+        try:
+            for offset in range(0, 1000, 100):
+                hooks = await to_thread(self._read, f"{path}?limit=100&offset={offset}")
+                if not isinstance(hooks, list):
+                    raise ValueError("Resposta inválida ao listar webhooks")
+                matches = [hook for hook in hooks if isinstance(hook, dict) and hook.get("url") == url]
+                if any(hook.get("active") is True and isinstance(hook.get("events"), list)
+                       and "message.received" in hook["events"] for hook in matches):
+                    return
+                if matches:
+                    raise ValueError("Webhook existente inativo ou sem o evento de recebimento")
+                if len(hooks) < 100:
+                    result = await to_thread(request_json, self._base_url + path,
+                        {"X-API-Key": self._api_key.get_secret_value()},
+                        {"url": url, "events": ["message.received"], "secret": secret.get_secret_value()})
+                    if isinstance(result, dict) and result.get("success") is False:
+                        raise ValueError("Cadastro do webhook recusado")
+                    return
+        except (OSError, ValueError):
+            raise OpenWAUnavailable from None
+        raise OpenWAUnavailable
+
     async def send_text(self, session_id: UUID, chat_id: str, content: str) -> WhatsAppDispatch:
         try:
             payload = await to_thread(request_json, f"{self._base_url}/sessions/{session_id}/messages/send-text",

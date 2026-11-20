@@ -177,6 +177,21 @@ async def check() -> None:
                 status, connection_body = await call("whatsapp", "GET", "connection")
                 assert status == 200 and json.loads(connection_body)["phone_number"] == "+5511999999999"
                 assert gateway.call_args.args[0] == f"{endpoint}/sessions/{SESSION}"
+            callback = f"https://nexus.example.test/api/v1/webhooks/openwa/{TENANT}"
+            active_hook = {"url": callback, "events": ["message.received"], "active": True}
+            with patch("src.services.openwa.request_json", side_effect=[{"data": []}, {"data": {"id": "hook"}}, {"data": [active_hook]}]) as hooks:
+                await worker.sync_webhook()
+                await worker.sync_webhook()
+            assert hooks.call_count == 3
+            assert hooks.call_args_list[1].args == (f"{endpoint}/sessions/{SESSION}/webhooks", {"X-API-Key": "openwa-test-secret"},
+                                                      {"url": callback, "events": ["message.received"], "secret": SECRET})
+            status, active = await call("integrations", "GET", "")
+            assert status == 200 and json.loads(active)["openwa_webhook_status"] == "active"
+            with patch("src.services.openwa.request_json", return_value={"data": [{**active_hook, "active": False}]}) as inactive:
+                await worker.sync_webhook()
+            assert inactive.call_count == 1
+            status, failed = await call("integrations", "GET", "")
+            assert status == 200 and json.loads(failed)["openwa_webhook_status"] == "error"
             async with tenant_transaction(engine, TENANT) as connection:
                 encrypted = await connection.scalar(text("SELECT config::text FROM nexus_atende.integrations"))
                 assert "resend-test-secret" not in encrypted and "openwa-test-secret" not in encrypted

@@ -98,7 +98,7 @@ Para preparar o primeiro administrador, gere o hash interativamente com `uv run 
 
 Defina `NEXUS_ATENDE_OPENWA_BASE_URL` com a URL HTTPS da API terminada em `/api` e `NEXUS_ATENDE_OPENWA_API_KEY` com a credencial fornecida para a integração. Crie e inicie uma sessão dedicada ao Nexus no painel do OpenWA. Com o login de migração, registre o UUID da sessão em `nexus_atende.tenants.openwa_session_id` na empresa Nexus e o número em `phone_number`. Os endpoints passam a consultar essa sessão.
 
-Para habilitar a entrada, configure `NEXUS_ATENDE_OPENWA_WEBHOOK_TENANT_ID` com o UUID da empresa Nexus e `NEXUS_ATENDE_OPENWA_WEBHOOK_SECRET` com um segredo aleatório de pelo menos 32 caracteres. Cadastre na sessão dedicada o webhook da API com esse mesmo segredo. A assinatura esperada é `X-OpenWA-Signature: sha256=<hex>`. O limite do corpo é 512 KiB. A configuração atual vincula o segredo a uma única empresa, suficiente para o piloto.
+Para habilitar a entrada, configure `NEXUS_ATENDE_OPENWA_WEBHOOK_TENANT_ID` com o UUID da empresa Nexus, um `NEXUS_ATENDE_OPENWA_WEBHOOK_SECRET` aleatório de pelo menos 32 caracteres e a origem pública HTTPS. Com a sessão dedicada vinculada e uma chave OpenWA com permissão para consultar e criar webhooks, o worker cadastra automaticamente o evento `message.received`. Ele consulta o cadastro existente antes de criar e verifica novamente a cada minuto. O painel mostra o estado do recebimento. A assinatura esperada é `X-OpenWA-Signature: sha256=<hex>` e o limite do corpo é 512 KiB.
 
 ## Executar a API, o worker e os alertas
 
@@ -113,6 +113,8 @@ Rode `powershell -NoProfile -File backend/tests/run_local.ps1` para criar um Pos
 ## Executar o painel web
 
 O painel em `frontend` usa Next.js App Router, TypeScript, Tailwind e Astryx. Inclui login, filas de conversas, histórico, envio e status de entregas, transferência, controle da IA, QR Code, operadores e fontes do RAG.
+
+Os cartões de Configurações indicam se faltam dados, se há uma configuração parcial ou falha conhecida, ou se os campos necessários estão preenchidos. A cor da configuração não substitui um teste real do provedor.
 
 Com a API em `http://127.0.0.1:8085`, configure `NEXUS_ATENDE_PUBLIC_ORIGIN=http://127.0.0.1:3000` no backend local. Em `frontend`, execute `corepack pnpm install --frozen-lockfile` e `corepack pnpm dev --hostname 127.0.0.1`. Acesse `http://127.0.0.1:3000`. Defina `NEXUS_ATENDE_API_URL` no ambiente do Next.js para usar outro endereço de API. O navegador usa rotas de mesma origem para sessão e SSE.
 

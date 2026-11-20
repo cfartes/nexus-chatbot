@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, SecretStr
 
 Provider = Literal["openai", "gemini", "anthropic", "ollama"]
+WebhookStatus = Literal["not_configured", "pending", "active", "error"]
 
 
 class AISettings(BaseModel):
@@ -35,5 +36,5 @@ class IntegrationsView(BaseModel):
     resend_recipient: str
     resend_has_key: bool
     openwa_url: str | None
-    openwa_webhook_url: str | None
+    openwa_webhook_status: WebhookStatus
     openwa_has_key: bool

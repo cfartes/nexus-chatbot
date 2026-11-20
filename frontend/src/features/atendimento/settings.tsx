@@ -15,9 +15,13 @@ const previewLabel = { answered: 'Resposta automática', handoff: 'Encaminharia 
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
 
 export function Settings() {
-  const [members, setMembers] = useState<Member[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
+  const [members, setMembers] = useState<Member[]>();
+  const [sources, setSources] = useState<Source[]>();
   const [connection, setConnection] = useState<Connection>();
+  const [connectionFailed, setConnectionFailed] = useState(false);
+  const [membersFailed, setMembersFailed] = useState(false);
+  const [sourcesFailed, setSourcesFailed] = useState(false);
+  const [welcomeFailed, setWelcomeFailed] = useState(false);
   const [phone, setPhone] = useState('');
   const [qr, setQr] = useState<string | null>(null);
   const [status, setStatus] = useState('');
@@ -25,21 +29,28 @@ export function Settings() {
   const [busy, setBusy] = useState(false);
   const [importKind, setImportKind] = useState('texto');
   const [welcome, setWelcome] = useState<string>();
+  const [savedWelcome, setSavedWelcome] = useState<string>();
   const [question, setQuestion] = useState('');
   const [preview, setPreview] = useState<Preview>();
+  const [previewFailed, setPreviewFailed] = useState(false);
   const loadConnection = useCallback(async () => {
-    const current = await api<Connection>('/whatsapp/connection');
-    setConnection(current);
-    setPhone(current.phone_number ?? '');
-    if (current.status === 'QR_READY' || current.status === 'STARTING') {
-      setQr((await api<{ qr_code: string | null }>('/whatsapp/connection/qr')).qr_code);
-    } else setQr(null);
+    try {
+      const current = await api<Connection>('/whatsapp/connection');
+      setConnection(current);
+      setPhone(current.phone_number ?? '');
+      if (current.status === 'QR_READY' || current.status === 'STARTING') {
+        setQr((await api<{ qr_code: string | null }>('/whatsapp/connection/qr')).qr_code);
+      } else setQr(null);
+      setConnectionFailed(false);
+    } catch (failure) { setConnectionFailed(true); setQr(null); throw failure; }
   }, []);
 
   useEffect(() => {
-    void api<Member[]>('/operators').then(setMembers).catch(failure => setError(errorMessage(failure)));
-    void api<Source[]>('/knowledge').then(setSources).catch(failure => setError(errorMessage(failure)));
-    void api<{ message: string }>('/knowledge/welcome').then(value => setWelcome(value.message)).catch(failure => setError(errorMessage(failure)));
+    void api<Member[]>('/operators').then(setMembers).catch(failure => { setMembersFailed(true); setError(errorMessage(failure)); });
+    void api<Source[]>('/knowledge').then(setSources).catch(failure => { setSourcesFailed(true); setError(errorMessage(failure)); });
+    void api<{ message: string }>('/knowledge/welcome').then(value => {
+      setWelcome(value.message); setSavedWelcome(value.message);
+    }).catch(failure => { setWelcomeFailed(true); setError(errorMessage(failure)); });
     void loadConnection().catch(failure => setError(errorMessage(failure)));
   }, [loadConnection]);
 
@@ -56,7 +67,7 @@ export function Settings() {
     const values = Object.fromEntries(new FormData(form));
     void run(async () => {
       const member = await api<Member>('/operators', { method: 'POST', body: JSON.stringify(values) });
-      setMembers(current => [...current, member]); form.reset();
+      setMembers(current => [...(current ?? []), member]); form.reset();
       if (!member.invite_sent) throw new ApiError(502, 'Operador cadastrado. O e-mail falhou. Use Reenviar convite.');
     }, 'Convite enviado.');
   }
@@ -77,9 +88,14 @@ export function Settings() {
       } else {
         await api('/knowledge', { method: 'PUT', body: JSON.stringify({ source, text: data.get('text') }) });
       }
-      setSources(await api<Source[]>('/knowledge')); form.reset();
+      setSources(await api<Source[]>('/knowledge')); setSourcesFailed(false); form.reset();
     }, 'Fonte salva.');
   }
+
+  const connected = connection?.status === 'READY' || connection?.status === 'CONNECTED';
+  const hasConnection = Boolean(connection?.phone_number || connection?.session_id || (connection && connection.status !== 'NOT_CONFIGURED'));
+  const pendingInvites = members?.some(member => member.invite_pending);
+  const activeMember = members?.some(member => member.is_active);
 
   return <section className="mx-auto grid max-w-screen-xl gap-4 p-4" aria-label="Configurações">
     <h2 className="text-2xl font-semibold">Configurações</h2>
@@ -87,13 +103,14 @@ export function Settings() {
     {status && <p role="status" className="rounded-lg bg-teal-50 p-3 text-teal-900">{status}</p>}
     <Integrations refreshConnection={loadConnection} />
     <section className={settingsGrid}>
-      <SettingsCard title="WhatsApp" action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
+      <SettingsCard title="WhatsApp" state={connectionFailed ? 'warning' : !connection ? 'loading' : connected && connection.phone_number ? 'ready' : hasConnection ? 'warning' : 'missing'} detail={connectionFailed ? 'Falha ao consultar a conexão' : connected ? connection.phone_number ? 'Telefone cadastrado e sessão conectada' : 'Cadastre o telefone da empresa' : 'Confira o telefone e o pareamento'} action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
         <p>{({ READY: 'Conectado', CONNECTED: 'Conectado', QR_READY: 'Aguardando pareamento', STARTING: 'Iniciando', NOT_CONFIGURED: 'Sessão não configurada', DISCONNECTED: 'Desconectado' } as Record<string, string>)[connection?.status ?? ''] ?? connection?.status ?? 'Consultando…'}</p>
         <form id="settings-phone" onSubmit={event => {
           event.preventDefault();
           void run(async () => {
             const saved = await api<{ phone_number: string }>('/whatsapp/connection/phone', { method: 'PUT', body: JSON.stringify({ phone_number: phone }) });
             setPhone(saved.phone_number);
+            setConnection(current => ({ ...current, status: current?.status ?? 'NOT_CONFIGURED', session_id: current?.session_id ?? null, phone_number: saved.phone_number }));
           }, 'Telefone do WhatsApp salvo.');
         }}>
           <label className="grid gap-1 text-sm">Número do WhatsApp<input name="phone_number" type="tel" autoComplete="tel" required maxLength={32} className={field} placeholder="+55 11 99999-9999" value={phone} onChange={event => setPhone(event.target.value)} /></label>
@@ -103,8 +120,8 @@ export function Settings() {
         {qr?.startsWith('data:image/png;base64,') && <><p className="text-sm">Abra os aparelhos conectados no WhatsApp e escaneie o código.</p><img src={qr} alt="QR Code para parear o WhatsApp da empresa" width={192} height={192} /></>}
         <Button label="Atualizar conexão" isDisabled={busy} onClick={() => void run(loadConnection, 'Status atualizado.')} />
       </SettingsCard>
-      <SettingsCard title="Operadores" action={<Button type="submit" form="settings-operator" label="Enviar convite" variant="primary" isDisabled={busy} />}>
-        <ul className="grid gap-2">{members.map(member => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={member.id}>
+      <SettingsCard title="Operadores" state={membersFailed ? 'warning' : !members ? 'loading' : pendingInvites ? 'warning' : activeMember ? 'ready' : 'missing'} detail={membersFailed ? 'Falha ao consultar os operadores' : pendingInvites ? 'Há convites pendentes' : activeMember ? 'Há operadores ativos' : 'Convide ou ative um operador'} action={<Button type="submit" form="settings-operator" label="Enviar convite" variant="primary" isDisabled={busy} />}>
+        <ul className="grid gap-2">{(members ?? []).map(member => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={member.id}>
           <p className="break-all text-sm">{member.name}<br />{member.email}<br />{member.invite_pending ? 'Convite pendente' : member.is_active ? 'Ativo' : 'Desativado'}</p>
           {member.invite_pending ? <Button label="Reenviar convite" isDisabled={busy} onClick={() => void run(async () => {
             const result = await api<Member>(`/operators/${member.id}/invite`, { method: 'POST' });
@@ -113,7 +130,7 @@ export function Settings() {
             if (member.is_active && !window.confirm(`Desativar ${member.name}? As conversas voltarão à fila.`)) return;
             void run(async () => {
               const updated = await api<Member>(`/operators/${member.id}`, { method: 'PUT', body: JSON.stringify({ name: member.name, is_active: !member.is_active }) });
-              setMembers(current => current.map(item => item.id === updated.id ? updated : item));
+              setMembers(current => current?.map(item => item.id === updated.id ? updated : item));
             }, 'Lista de operadores atualizada.');
           }} />}
           <details className="w-full text-sm"><summary className="cursor-pointer underline">Editar operador</summary>
@@ -124,7 +141,7 @@ export function Settings() {
                 const updated = await api<Member>(`/operators/${member.id}`, { method: 'PUT', body: JSON.stringify({
                   name: values.get('name'), is_active: member.is_active,
                 }) });
-                setMembers(current => current.map(item => item.id === updated.id ? updated : item));
+                setMembers(current => current?.map(item => item.id === updated.id ? updated : item));
                 form.reset();
               }, 'Operador atualizado.');
             }}>
@@ -138,15 +155,15 @@ export function Settings() {
           <label className="grid gap-1 text-sm">E-mail<input name="email" required type="email" maxLength={150} className={field} /></label>
         </form>
       </SettingsCard>
-      <SettingsCard title="Base de conhecimento" action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy} />}>
+      <SettingsCard title="Base de conhecimento" state={sourcesFailed ? 'warning' : !sources ? 'loading' : sources.length ? 'ready' : 'missing'} detail={sourcesFailed ? 'Falha ao consultar as fontes' : sources?.length ? 'Há fontes adicionadas' : 'Adicione a primeira fonte'} action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy} />}>
         <p className="text-sm text-slate-600">Adicione fontes sobre a Nexus, seus serviços, aplicativos e funcionalidades.</p>
-        <ul className="grid gap-2">{sources.map(source => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={source.source}>
+        <ul className="grid gap-2">{(sources ?? []).map(source => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={source.source}>
           <p className="wrap-anywhere text-sm">{source.source} · {source.chunks} trecho(s)</p>
           <Button label="Remover" isDisabled={busy} onClick={() => {
             if (!window.confirm(`Remover a fonte ${source.source}?`)) return;
             void run(async () => {
               await api(`/knowledge?source=${encodeURIComponent(source.source)}`, { method: 'DELETE' });
-              setSources(current => current.filter(item => item.source !== source.source));
+              setSources(current => current?.filter(item => item.source !== source.source));
             }, 'Fonte removida.');
           }} />
         </li>)}</ul>
@@ -158,24 +175,27 @@ export function Settings() {
           {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, PDF ou DOCX<input name="file" required type="file" accept=".txt,.pdf,.docx" className={field} /></label>}
         </form>
       </SettingsCard>
-    <SettingsCard title="Boas-vindas" action={<Button type="submit" form="settings-welcome" label="Salvar boas-vindas" variant="primary" isDisabled={busy || welcome === undefined} />}>
+    <SettingsCard title="Boas-vindas" state={welcomeFailed ? 'warning' : savedWelcome === undefined ? 'loading' : savedWelcome ? 'ready' : 'missing'} detail={welcomeFailed ? 'Falha ao consultar a mensagem padrão' : savedWelcome ? 'Mensagem padrão salva' : 'Sem mensagem padrão'} action={<Button type="submit" form="settings-welcome" label="Salvar boas-vindas" variant="primary" isDisabled={busy || welcome === undefined} />}>
       <form id="settings-welcome" className="grid gap-3" onSubmit={event => {
         event.preventDefault();
         if (welcome === undefined) return;
         void run(async () => {
           const saved = await api<{ message: string }>('/knowledge/welcome', { method: 'PUT', body: JSON.stringify({ message: welcome }) });
           setWelcome(saved.message);
+          setSavedWelcome(saved.message);
         }, 'Mensagem de boas-vindas salva.');
       }}>
         <TextArea label="Mensagem padrão" description="Aparece na primeira resposta automática e depois de 15 minutos sem interação. Deixe em branco para desativar o texto fixo." value={welcome ?? ''} onChange={setWelcome} maxLength={500} isDisabled={busy || welcome === undefined} />
       </form>
     </SettingsCard>
-    <SettingsCard title="Testar a IA" action={<Button type="submit" form="settings-preview" label="Testar resposta" variant="primary" isDisabled={busy || !question.trim()} />}>
+    <SettingsCard title="Testar a IA" state={previewFailed || preview?.status === 'unavailable' ? 'warning' : preview ? 'ready' : 'missing'} detail={previewFailed ? 'Falha ao executar o teste' : preview ? previewLabel[preview.status] : 'Ainda sem teste nesta tela'} action={<Button type="submit" form="settings-preview" label="Testar resposta" variant="primary" isDisabled={busy || !question.trim()} />}>
       <form id="settings-preview" className="grid gap-3" onSubmit={event => {
         event.preventDefault();
         setPreview(undefined);
+        setPreviewFailed(false);
         void run(async () => {
-          setPreview(await api<Preview>('/knowledge/preview', { method: 'POST', body: JSON.stringify({ question }) }));
+          try { setPreview(await api<Preview>('/knowledge/preview', { method: 'POST', body: JSON.stringify({ question }) })); }
+          catch (failure) { setPreviewFailed(true); throw failure; }
         }, '');
       }}>
         <TextArea label="Pergunta de teste" description="Simula o início de uma conversa. Use uma pergunta sem dados pessoais." value={question} onChange={setQuestion} maxLength={4000} isDisabled={busy} />

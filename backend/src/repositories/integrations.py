@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from json import dumps
 from uuid import UUID
 
@@ -6,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
-from src.schemas.integrations import Provider
+from src.schemas.integrations import Provider, WebhookStatus
 
 
 class StoredIntegrations(BaseModel):
@@ -20,11 +22,20 @@ class StoredIntegrations(BaseModel):
     recipient: str | None = None
     openwa_key: str | None = None
     openwa_url: str | None = None
+    openwa_webhook_status: WebhookStatus = "pending"
 
 
 class IntegrationRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
+
+    @asynccontextmanager
+    async def webhook_lock(self, tenant_id: UUID) -> AsyncIterator[bool]:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            acquired = await connection.scalar(text("""
+                SELECT pg_try_advisory_xact_lock(hashtextextended(:lock_name, 0))
+            """), {"lock_name": f"openwa-registration:{tenant_id}"})
+            yield bool(acquired)
 
     async def get(self, tenant_id: UUID) -> StoredIntegrations:
         async with tenant_transaction(self._engine, tenant_id) as connection:
