@@ -25,6 +25,7 @@ ORIGIN = "https://atende.nexusdataanalytics.tech"
 ENV_FILE = ROOT / ".env.production"
 STATE = ROOT / ".deploy"
 ADMIN_FILE = STATE / "primeiro-acesso.txt"
+ROTAFY_DOMAIN = "rotafy.nexusdataanalytics.tech"
 
 
 def run(*args: str, input: str | None = None, stdout: BinaryIO | None = None) -> None:
@@ -110,28 +111,88 @@ def public_check() -> None:
     raise RuntimeError("O HTTPS público ainda não respondeu. Verifique DNS, entrypoint e certificado no Traefik.")
 
 
+def choose(flag: str, explicit: str | None, candidates: set[str]) -> str:
+    candidates.discard("")
+    if explicit:
+        value = explicit
+    elif len(candidates) == 1:
+        value = next(iter(candidates))
+    elif sys.stdin.isatty():
+        choices = f" ({', '.join(sorted(candidates))})" if candidates else ""
+        value = input(f"{flag}{choices}: ").strip()
+    else:
+        raise ValueError(f"Não foi possível detectar {flag}. Opções: {', '.join(sorted(candidates)) or 'nenhuma'}.")
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", value):
+        raise ValueError(f"Valor inválido para {flag}.")
+    return value
+
+
+def detect_routing(args: argparse.Namespace) -> dict[str, str]:
+    running_ids = output("docker", "ps", "-q").splitlines()
+    containers = json.loads(output("docker", "inspect", "--type", "container", *running_ids)) if running_ids else []
+    by_name = {container["Name"].lstrip("/"): container for container in containers}
+    proxies = {name for name, container in by_name.items() if "traefik" in container["Config"]["Image"].lower()}
+    name = choose("--traefik-container", args.traefik_container, proxies)
+    if name not in by_name:
+        raise ValueError("O container Traefik informado não está em execução.")
+    proxy = by_name[name]
+    networks = proxy["NetworkSettings"]["Networks"]
+    flags = proxy["Config"].get("Cmd") or []
+    if any(flag.lower() in {"--providers.docker.swarmmode=true", "--providers.docker=false"}
+           or flag.lower().startswith("--providers.swarm") and not flag.lower().endswith("=false") for flag in flags):
+        raise ValueError("O instalador exige o provider Docker do Traefik, com uma rede bridge.")
+
+    entries: set[str] = set()
+    resolvers: set[str] = set()
+    route_networks: set[str] = set()
+    for container in containers:
+        labels = container["Config"].get("Labels") or {}
+        for key, rule in labels.items():
+            if not key.startswith("traefik.http.routers.") or not key.endswith(".rule") or ROTAFY_DOMAIN not in rule:
+                continue
+            route = key[:-len(".rule")]
+            entries.update(entry.strip() for entry in labels.get(route + ".entrypoints", "").split(","))
+            resolvers.add(labels.get(route + ".tls.certresolver", ""))
+            shared = set(networks) & set(container["NetworkSettings"]["Networks"])
+            selected = labels.get("traefik.docker.network")
+            route_networks.update({selected} if isinstance(selected, str) and selected in shared else shared)
+    flagged_entries: set[str] = set()
+    flagged_resolvers: set[str] = set()
+    for flag in flags:
+        match = re.fullmatch(r"--entrypoints\.([^.]+)\.address=.*:443(?:/tcp)?", flag, re.IGNORECASE)
+        if match:
+            flagged_entries.add(match[1])
+        match = re.match(r"--certificatesresolvers\.([^.]+)\.", flag, re.IGNORECASE)
+        if match:
+            flagged_resolvers.add(match[1])
+    network = choose("--network", args.network, route_networks or set(networks))
+    if network not in networks:
+        raise ValueError(f"O Traefik não pertence à rede {network}.")
+    metadata = json.loads(output("docker", "network", "inspect", network))[0]
+    if metadata.get("Driver") != "bridge" or metadata.get("Internal"):
+        raise ValueError("Informe uma rede bridge do Traefik com saída de rede.")
+    return {
+        "NEXUS_DEPLOY_PROXY_IP": str(ipaddress.ip_address(networks[network].get("IPAddress", ""))),
+        "NEXUS_DEPLOY_NETWORK": network,
+        "NEXUS_DEPLOY_ENTRYPOINT": choose("--entrypoint", args.entrypoint, entries - {""} or flagged_entries),
+        "NEXUS_DEPLOY_RESOLVER": choose("--resolver", args.resolver, resolvers - {""} or flagged_resolvers),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--traefik-container", required=True)
-    parser.add_argument("--network", required=True)
-    parser.add_argument("--entrypoint", required=True)
-    parser.add_argument("--resolver", required=True)
+    parser.add_argument("--traefik-container")
+    parser.add_argument("--network")
+    parser.add_argument("--entrypoint")
+    parser.add_argument("--resolver")
     parser.add_argument("--admin-email")
     parser.add_argument("--openwa-url", default="", help="Endereço HTTPS terminado em /api, usado na primeira instalação")
     parser.add_argument("--skip-public-check", action="store_true", help="Validar apenas a saúde interna dos serviços")
     args = parser.parse_args()
 
-    for name in (args.traefik_container, args.network, args.entrypoint, args.resolver):
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", name):
-            raise ValueError("Nome de proxy, rede, entrypoint ou resolver inválido.")
     if args.openwa_url and not re.fullmatch(r"https://[a-zA-Z0-9.-]+(?::[0-9]+)?/api/?", args.openwa_url):
         raise ValueError("Endereço OpenWA inválido, use uma URL HTTPS terminada em /api.")
-    if output("docker", "network", "inspect", "--format", "{{.Driver}}", args.network) != "bridge":
-        raise ValueError("Informe uma rede bridge do Traefik com provider Docker.")
-    networks = json.loads(output("docker", "inspect", "--type", "container", "--format", "{{json .NetworkSettings.Networks}}", args.traefik_container))
-    proxy_ip = str(ipaddress.ip_address(networks.get(args.network, {}).get("IPAddress", "")))
-    os.environ.update(NEXUS_DEPLOY_PROXY_IP=proxy_ip, NEXUS_DEPLOY_NETWORK=args.network,
-                      NEXUS_DEPLOY_ENTRYPOINT=args.entrypoint, NEXUS_DEPLOY_RESOLVER=args.resolver)
+    os.environ.update(detect_routing(args))
     for name in tuple(os.environ):
         if name.startswith("NEXUS_ATENDE_"):
             del os.environ[name]
@@ -148,9 +209,10 @@ def main() -> None:
         if not ENV_FILE.exists():
             if has_database or ADMIN_FILE.exists():
                 raise RuntimeError("A instalação anterior tem dados ou credenciais. Restaure .env.production antes de continuar.")
-            if not args.admin_email or not re.fullmatch(r"[a-zA-Z0-9_+.%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", args.admin_email):
+            email = args.admin_email or (input("E-mail do administrador: ").strip() if sys.stdin.isatty() else "")
+            if not re.fullmatch(r"[a-zA-Z0-9_+.%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", email):
                 raise ValueError("Informe --admin-email com um e-mail válido na primeira instalação.")
-            create_environment(args.admin_email.lower(), args.openwa_url)
+            create_environment(email.lower(), args.openwa_url)
         values = dict(line.split("=", 1) for line in ENV_FILE.read_text(encoding="utf-8").splitlines()
                       if line and not line.startswith("#") and "=" in line)
         if values.get("NEXUS_ATENDE_PUBLIC_ORIGIN") != ORIGIN:

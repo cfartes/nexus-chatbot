@@ -131,15 +131,10 @@ O instalador usa o Traefik existente com provider Docker, uma rede bridge compar
 ```sh
 git clone --branch main https://github.com/cfartes/nexus-chatbot.git /opt/nexus-atende
 cd /opt/nexus-atende
-python3 scripts/install_vps.py \
-  --traefik-container CONTAINER_TRAEFIK \
-  --network REDE_TRAEFIK \
-  --entrypoint ENTRYPOINT_HTTPS \
-  --resolver RESOLVER_ACME \
-  --admin-email EMAIL_DO_ADMINISTRADOR
+python3 scripts/install_vps.py
 ```
 
-Use os nomes da instalação existente do Traefik. Na primeira execução, `--openwa-url URL_HTTPS_TERMINADA_EM_API` permite autorizar o endereço do gateway. Os números de telefone, a sessão dedicada e as credenciais dos provedores são configurados separadamente.
+O instalador tenta reutilizar a rede, o entrypoint HTTPS e o resolver ACME do RotaFY. Se houver ambiguidade, o terminal pede os valores. Também é possível informar `--traefik-container`, `--network`, `--entrypoint` e `--resolver` explicitamente. Na primeira execução, informe o e-mail do administrador quando solicitado. `--openwa-url` permite autorizar o endereço HTTPS do gateway terminado em `/api`. Os números de telefone, a sessão dedicada e as credenciais dos provedores são configurados separadamente.
 
 O projeto Docker `nexus-atende-prod` instala banco, API, painel e worker. O Traefik roteia o painel e `/api/v1/` no mesmo domínio, sem portas do aplicativo publicadas no host. O instalador gera os segredos em `.env.production` e grava o primeiro acesso em `.deploy/primeiro-acesso.txt`. Consulte os dados privadamente na VPS. Preserve a chave de criptografia e os demais segredos ao atualizar.
 
