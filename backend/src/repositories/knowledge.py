@@ -50,7 +50,16 @@ class KnowledgeRepository:
             result = await connection.execute(text("""
                 SELECT source, content FROM nexus_atende.knowledge_chunks WHERE tenant_id = :tenant_id
                     AND embedding_space = :embedding_space
-                    AND embedding <=> CAST(CAST(:embedding AS text) AS vector) <= 0.30
                 ORDER BY embedding <=> CAST(CAST(:embedding AS text) AS vector) LIMIT 3
             """), {"tenant_id": tenant_id, "embedding": str(embedding), "embedding_space": embedding_space})
             return [KnowledgeMatch.model_validate(row) for row in result.mappings()]
+
+    async def index_ready(self, tenant_id: UUID, embedding_space: str) -> tuple[bool, bool]:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            result = await connection.execute(text("""
+                SELECT count(*) FILTER (WHERE embedding_space <> :embedding_space) > 0 AS has_outdated_sources,
+                    count(*) FILTER (WHERE embedding_space = :embedding_space) > 0 AS has_current_index
+                FROM nexus_atende.knowledge_chunks WHERE tenant_id = :tenant_id
+            """), {"tenant_id": tenant_id, "embedding_space": embedding_space})
+            has_outdated_sources, has_current_index = result.one()
+            return bool(has_outdated_sources), bool(has_current_index)

@@ -46,10 +46,16 @@ class Worker:
             if not client:
                 return
             status = "pending"
-            if tenant and tenant.openwa_session_id:
+            if tenant and tenant.openwa_session_id and tenant.phone_number:
                 try:
-                    await client.ensure_webhook(tenant.openwa_session_id, url, self._webhook_secret)
-                    status = "active"
+                    session_status, phone = await client.session_identity(tenant.openwa_session_id)
+                    verified = session_status in {"READY", "CONNECTED"} and phone == tenant.phone_number
+                    binding_matches = await self._tenants.verify_number(tenant_id, tenant.phone_number, tenant.openwa_session_id, verified)
+                    if verified and binding_matches:
+                        await client.ensure_webhook(tenant.openwa_session_id, url, self._webhook_secret)
+                        status = "active"
+                    elif session_status in {"READY", "CONNECTED"} and phone:
+                        status = "error"
                 except OpenWAUnavailable:
                     status = "error"
             if (await self._repository.get(tenant_id)).openwa_webhook_status != status:

@@ -1,6 +1,7 @@
 from asyncio import Semaphore, to_thread
 from base64 import b64decode
 from binascii import Error as Base64Error
+from re import fullmatch, sub
 from urllib.error import HTTPError, URLError
 from uuid import UUID
 
@@ -17,6 +18,30 @@ class OpenWAUnavailable(Exception):
     pass
 
 
+def account_phone(payload: object, depth: int = 0) -> str | None:
+    if not isinstance(payload, dict) or depth > 2:
+        return None
+    for field in ("phone", "phoneNumber", "phone_number", "number", "user", "_serialized", "id"):
+        value = payload.get(field)
+        if not isinstance(value, str):
+            continue
+        if "@" in value:
+            value, host = value.split("@", 1)
+            if host not in {"c.us", "s.whatsapp.net"}:
+                continue
+            value = value.split(":", 1)[0]
+        elif field in {"_serialized", "id"}:
+            continue
+        cleaned = sub(r"[ ().-]", "", value).removeprefix("+")
+        if fullmatch(r"[1-9][0-9]{7,14}", cleaned):
+            return f"+{cleaned}"
+    for field in ("me", "wid", "account", "data", "session"):
+        number = account_phone(payload.get(field), depth + 1)
+        if number:
+            return number
+    return None
+
+
 class OpenWAClient:
     def __init__(self, base_url: str, api_key: SecretStr) -> None:
         self._base_url = base_url
@@ -28,12 +53,51 @@ class OpenWAClient:
         return decoded.get("data", decoded) if isinstance(decoded, dict) else decoded
 
     async def session_status(self, session_id: UUID) -> str:
+        status, _ = await self.session_identity(session_id)
+        return status
+
+    async def session_identity(self, session_id: UUID) -> tuple[str, str | None]:
         try:
             async with self._requests:
                 payload = await to_thread(self._read, f"/sessions/{session_id}")
-            return OpenWASession.model_validate(payload).status.upper()
+            return OpenWASession.model_validate(payload).status.upper(), account_phone(payload)
         except (URLError, OSError, ValueError):
             raise OpenWAUnavailable from None
+
+    def _write(self, path: str, payload: object) -> object:
+        result = request_json(self._base_url + path, {"X-API-Key": self._api_key.get_secret_value()}, payload)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise ValueError("Operação recusada pelo OpenWA")
+        return result.get("data", result) if isinstance(result, dict) else result
+
+    async def ensure_session(self, name: str) -> UUID:
+        try:
+            for offset in range(0, 1000, 100):
+                payload = await to_thread(self._read, f"/sessions?limit=100&offset={offset}")
+                sessions = payload.get("sessions") if isinstance(payload, dict) else payload
+                if not isinstance(sessions, list):
+                    raise ValueError("Resposta inválida ao listar sessões")
+                matches = [item for item in sessions if isinstance(item, dict) and item.get("name") == name]
+                if len(matches) > 1:
+                    raise ValueError("Mais de uma sessão dedicada encontrada")
+                if matches:
+                    return UUID(str(matches[0].get("id", "")))
+                if len(sessions) < 100:
+                    created = await to_thread(self._write, "/sessions", {"name": name})
+                    return UUID(str(created.get("id", "")) if isinstance(created, dict) else "")
+        except HTTPError as error:
+            raise OpenWAUnavailable(f"OpenWA recusou a preparação da sessão (HTTP {error.code}). Confira a chave e suas permissões.") from None
+        except (OSError, ValueError):
+            raise OpenWAUnavailable("Não foi possível preparar a sessão no OpenWA. Verifique a conexão e tente novamente.") from None
+        raise OpenWAUnavailable("A listagem de sessões do OpenWA não pôde ser concluída")
+
+    async def start_session(self, session_id: UUID) -> None:
+        try:
+            await to_thread(self._write, f"/sessions/{session_id}/start", {})
+        except HTTPError as error:
+            raise OpenWAUnavailable(f"OpenWA recusou o início da sessão (HTTP {error.code}). Confira a chave e suas permissões.") from None
+        except (OSError, ValueError):
+            raise OpenWAUnavailable("Não foi possível iniciar a sessão no OpenWA. Tente novamente.") from None
 
     async def qr_code(self, session_id: UUID) -> str | None:
         try:

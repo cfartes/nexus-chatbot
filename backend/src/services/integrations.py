@@ -111,7 +111,7 @@ class IntegrationService:
             raise ValueError("Este endereço OpenWA ainda não foi autorizado na implantação")
         if config.api_key:
             await self._repository.save(tenant_id, {"openwa_url": endpoint, "openwa_key": self._encrypt(config.api_key),
-                                                  "openwa_webhook_status": "pending"})
+                                                  "openwa_webhook_status": "pending"}, reset_openwa_verification=True)
         elif endpoint != current_url or not (saved.openwa_key or self._settings.openwa_api_key):
             raise ValueError("Informe a chave do servidor OpenWA")
         return await self.view(tenant_id)

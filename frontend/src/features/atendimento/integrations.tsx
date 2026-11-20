@@ -85,6 +85,14 @@ export function Integrations({ refreshConnection }: { refreshConnection: () => P
         <label className="grid gap-1 text-sm">Remetente verificado<input className={field} name="sender" defaultValue={config.resend_sender} required maxLength={200} /></label>
         <label className="grid gap-1 text-sm">E-mail da equipe para alertas<input className={field} name="recipient" type="email" defaultValue={config.resend_recipient} maxLength={150} /></label>
         <p className="text-sm text-slate-600">O remetente envia convites. O e-mail da equipe recebe alertas de transbordo.</p>
+        <Button type="button" label="Enviar e-mail de teste" isDisabled={busy || !resendReady} onClick={async () => {
+          setBusy(true); setStatus(''); setError(''); setFailed(undefined);
+          try {
+            await api('/integrations/resend/test', { method: 'POST' });
+            setStatus('O Resend aceitou o e-mail de teste para o destinatário salvo.');
+          } catch (failure) { setFailed('resend'); setError(errorMessage(failure)); }
+          finally { setBusy(false); }
+        }} />
       </form>
       </SettingsCard>
       <SettingsCard title="OpenWA" state={failed === 'openwa' || config.openwa_webhook_status === 'error' ? 'warning' : openwaReady ? 'ready' : openwaPartial ? 'warning' : 'missing'} detail={failed === 'openwa' ? 'Falha ao atualizar ou consultar o OpenWA' : receptionLabel[config.openwa_webhook_status]} action={<Button type="submit" form="settings-openwa" label="Salvar OpenWA" variant="primary" isDisabled={busy} />}>

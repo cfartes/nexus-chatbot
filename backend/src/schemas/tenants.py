@@ -7,3 +7,4 @@ class TenantConnection(BaseModel):
     id: UUID
     phone_number: str | None
     openwa_session_id: UUID | None
+    openwa_number_verified: bool

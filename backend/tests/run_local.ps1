@@ -25,9 +25,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao preparar a senha de teste.' }
 @"
 CREATE ROLE nexus_atende_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS IN ROLE nexus_atende_app PASSWORD '$testRuntimePassword';
-INSERT INTO nexus_atende.tenants (id, name, openwa_session_id) VALUES
-('00000000-0000-0000-0000-000000000001', 'Nexus', '00000000-0000-0000-0000-000000000003'),
-('00000000-0000-0000-0000-000000000002', 'Outra empresa', NULL);
+INSERT INTO nexus_atende.tenants (id, name, openwa_session_id, openwa_number_verified, phone_number) VALUES
+('00000000-0000-0000-0000-000000000001', 'Nexus', '00000000-0000-0000-0000-000000000003', true, '+5511999999999'),
+('00000000-0000-0000-0000-000000000002', 'Outra empresa', NULL, false, NULL);
 INSERT INTO nexus_atende.users (tenant_id, email, name, password_hash, role) VALUES
 ('00000000-0000-0000-0000-000000000001', 'admin@example.test', 'Admin Nexus', '$passwordHash', 'admin'),
 ('00000000-0000-0000-0000-000000000001', 'first@example.test', 'Primeiro', '$passwordHash', 'operator'),

@@ -12,6 +12,13 @@ type Source = { source: string; chunks: number };
 type Connection = { status: string; phone_number: string | null; session_id: string | null };
 type Preview = { status: 'answered' | 'handoff' | 'unavailable'; message: string; sources: string[] };
 const previewLabel = { answered: 'Resposta automática', handoff: 'Encaminharia para um atendente', unavailable: 'IA indisponível' };
+const connectionLabels: Record<string, string> = {
+  READY: 'Conectado', CONNECTED: 'Conectado', QR_READY: 'Escaneie o QR Code', STARTING: 'Iniciando',
+  INITIALIZING: 'Iniciando', AUTHENTICATING: 'Autenticando', NOT_CONFIGURED: 'Sessão não configurada',
+  CREATED: 'Sessão criada', DISCONNECTED: 'Desconectado', STOPPED: 'Sessão parada', FAILED: 'Falha na sessão',
+  VERIFYING_NUMBER: 'Aguardando confirmação do telefone', WRONG_NUMBER: 'O número pareado difere do telefone salvo',
+  ACTION_REQUIRED: 'Verifique a sessão no OpenWA', UNKNOWN: 'Estado da sessão desconhecido',
+};
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
 
 export function Settings() {
@@ -54,6 +61,12 @@ export function Settings() {
     void loadConnection().catch(failure => setError(errorMessage(failure)));
   }, [loadConnection]);
 
+  useEffect(() => {
+    if (!connection || !['CREATED', 'STARTING', 'INITIALIZING', 'AUTHENTICATING', 'QR_READY', 'VERIFYING_NUMBER'].includes(connection.status)) return;
+    const timer = window.setInterval(() => { void loadConnection().catch(failure => setError(errorMessage(failure))); }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [connection, loadConnection]);
+
   async function run(action: () => Promise<void>, success: string) {
     setBusy(true); setError(''); setStatus('');
     try { await action(); setStatus(success); }
@@ -94,6 +107,8 @@ export function Settings() {
 
   const connected = connection?.status === 'READY' || connection?.status === 'CONNECTED';
   const hasConnection = Boolean(connection?.phone_number || connection?.session_id || (connection && connection.status !== 'NOT_CONFIGURED'));
+  const phoneDetail = connectionFailed ? 'Falha ao consultar a conexão' : connected ? 'Telefone cadastrado e sessão conectada'
+    : connection?.phone_number && !connection.session_id ? 'Telefone salvo. Inicie o pareamento.' : connectionLabels[connection?.status ?? ''] ?? 'Salve o telefone da empresa';
   const pendingInvites = members?.some(member => member.invite_pending);
   const activeMember = members?.some(member => member.is_active);
 
@@ -103,14 +118,14 @@ export function Settings() {
     {status && <p role="status" className="rounded-lg bg-teal-50 p-3 text-teal-900">{status}</p>}
     <Integrations refreshConnection={loadConnection} />
     <section className={settingsGrid}>
-      <SettingsCard title="WhatsApp" state={connectionFailed ? 'warning' : !connection ? 'loading' : connected && connection.phone_number ? 'ready' : hasConnection ? 'warning' : 'missing'} detail={connectionFailed ? 'Falha ao consultar a conexão' : connected ? connection.phone_number ? 'Telefone cadastrado e sessão conectada' : 'Cadastre o telefone da empresa' : 'Confira o telefone e o pareamento'} action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
-        <p>{({ READY: 'Conectado', CONNECTED: 'Conectado', QR_READY: 'Aguardando pareamento', STARTING: 'Iniciando', NOT_CONFIGURED: 'Sessão não configurada', DISCONNECTED: 'Desconectado' } as Record<string, string>)[connection?.status ?? ''] ?? connection?.status ?? 'Consultando…'}</p>
+      <SettingsCard title="WhatsApp" state={connectionFailed ? 'warning' : !connection ? 'loading' : connected && connection.phone_number ? 'ready' : hasConnection ? 'warning' : 'missing'} detail={phoneDetail} action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
+        <p>{connection?.phone_number && !connection.session_id ? phoneDetail : connectionLabels[connection?.status ?? ''] ?? 'Consultando…'}</p>
         <form id="settings-phone" onSubmit={event => {
           event.preventDefault();
           void run(async () => {
             const saved = await api<{ phone_number: string }>('/whatsapp/connection/phone', { method: 'PUT', body: JSON.stringify({ phone_number: phone }) });
             setPhone(saved.phone_number);
-            setConnection(current => ({ ...current, status: current?.status ?? 'NOT_CONFIGURED', session_id: current?.session_id ?? null, phone_number: saved.phone_number }));
+            setConnection(current => ({ ...current, status: current?.session_id && current.phone_number !== saved.phone_number ? 'VERIFYING_NUMBER' : current?.status ?? 'NOT_CONFIGURED', session_id: current?.session_id ?? null, phone_number: saved.phone_number }));
           }, 'Telefone do WhatsApp salvo.');
         }}>
           <label className="grid gap-1 text-sm">Número do WhatsApp<input name="phone_number" type="tel" autoComplete="tel" required maxLength={32} className={field} placeholder="+55 11 99999-9999" value={phone} onChange={event => setPhone(event.target.value)} /></label>
@@ -118,6 +133,11 @@ export function Settings() {
         </form>
         {connection?.session_id && <p className="wrap-anywhere text-sm text-slate-600">Sessão: {connection.session_id}</p>}
         {qr?.startsWith('data:image/png;base64,') && <><p className="text-sm">Abra os aparelhos conectados no WhatsApp e escaneie o código.</p><img src={qr} alt="QR Code para parear o WhatsApp da empresa" width={192} height={192} /></>}
+        {connection?.phone_number && (!connection.session_id || ['CREATED', 'DISCONNECTED', 'STOPPED', 'FAILED'].includes(connection.status)) &&
+          <Button label="Iniciar pareamento" isDisabled={busy} onClick={() => void run(async () => {
+            await api('/whatsapp/connection/pair', { method: 'POST' });
+            await loadConnection();
+          }, 'Sessão iniciada. Aguarde o QR Code.')} />}
         <Button label="Atualizar conexão" isDisabled={busy} onClick={() => void run(loadConnection, 'Status atualizado.')} />
       </SettingsCard>
       <SettingsCard title="Operadores" state={membersFailed ? 'warning' : !members ? 'loading' : pendingInvites ? 'warning' : activeMember ? 'ready' : 'missing'} detail={membersFailed ? 'Falha ao consultar os operadores' : pendingInvites ? 'Há convites pendentes' : activeMember ? 'Há operadores ativos' : 'Convide ou ative um operador'} action={<Button type="submit" form="settings-operator" label="Enviar convite" variant="primary" isDisabled={busy} />}>

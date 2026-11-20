@@ -6,7 +6,12 @@ from src.schemas.whatsapp import WhatsAppConnection, WhatsAppQR
 from src.services.openwa import OpenWAUnavailable
 from src.services.integrations import IntegrationService
 
-_KNOWN_STATES = frozenset({"CREATED", "DISCONNECTED", "STOPPED", "FAILED", "READY", "CONNECTED", "QR_READY", "STARTING"})
+_KNOWN_STATES = frozenset({"CREATED", "DISCONNECTED", "STOPPED", "FAILED", "READY", "CONNECTED", "QR_READY", "STARTING",
+                           "INITIALIZING", "AUTHENTICATING", "ACTION_REQUIRED", "WRONG_NUMBER", "VERIFYING_NUMBER"})
+
+
+class PairingConflict(Exception):
+    pass
 
 
 class WhatsAppService:
@@ -27,11 +32,39 @@ class WhatsAppService:
         if tenant is None or tenant.openwa_session_id is None:
             return WhatsAppConnection(status="NOT_CONFIGURED", phone_number=tenant.phone_number if tenant else None)
         client = await self._integrations.openwa(tenant_id)
-        status = await client.session_status(tenant.openwa_session_id) if client else "NOT_CONFIGURED"
+        status, detected_phone = await client.session_identity(tenant.openwa_session_id) if client else ("NOT_CONFIGURED", None)
+        if status in {"READY", "CONNECTED"} and tenant.phone_number:
+            if detected_phone and detected_phone != tenant.phone_number:
+                status = "WRONG_NUMBER"
+            elif not tenant.openwa_number_verified:
+                status = "VERIFYING_NUMBER"
         return WhatsAppConnection(
             status=status if status in _KNOWN_STATES or not client else "UNKNOWN", phone_number=tenant.phone_number,
             session_id=tenant.openwa_session_id,
         )
+
+    async def pair(self, tenant_id: UUID) -> None:
+        if not self._integrations.webhook_url(tenant_id):
+            raise ValueError("Configure primeiro a origem pública HTTPS e a empresa do webhook no servidor")
+        async with self._tenants.pairing_lock(tenant_id) as acquired:
+            if not acquired:
+                raise PairingConflict("Já existe um pareamento em andamento")
+            tenant = await self._tenants.get_connection(tenant_id)
+            if tenant is None or not tenant.phone_number:
+                raise ValueError("Salve o número do WhatsApp antes de iniciar o pareamento")
+            client = await self._integrations.openwa(tenant_id)
+            if client is None:
+                raise ValueError("Salve o servidor e a chave OpenWA em Integrações")
+            session_id = tenant.openwa_session_id
+            if session_id is None:
+                session_id = await client.ensure_session(f"nexus-atende-{tenant_id}")
+                if not await self._tenants.bind_session(tenant_id, tenant.phone_number, session_id):
+                    raise PairingConflict("O telefone ou a sessão mudou. Recarregue e tente novamente")
+            status, actual_phone = await client.session_identity(session_id)
+            if status in {"READY", "CONNECTED"} and actual_phone and actual_phone != tenant.phone_number:
+                raise PairingConflict("O número conectado ao OpenWA difere do número salvo. Confira a sessão dedicada no OpenWA.")
+            if status in {"CREATED", "STOPPED", "FAILED", "DISCONNECTED"}:
+                await client.start_session(session_id)
 
     async def qr(self, tenant_id: UUID) -> WhatsAppQR:
         tenant = await self._tenants.get_connection(tenant_id)

@@ -44,8 +44,12 @@ class IntegrationRepository:
             """), {"tenant_id": tenant_id})
             return StoredIntegrations.model_validate_json(raw) if raw else StoredIntegrations()
 
-    async def save(self, tenant_id: UUID, changes: dict[str, str | None]) -> None:
+    async def save(self, tenant_id: UUID, changes: dict[str, str | None], *, reset_openwa_verification: bool = False) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
+            if reset_openwa_verification:
+                await connection.execute(text("""
+                    UPDATE nexus_atende.tenants SET openwa_number_verified = false WHERE id = :tenant_id
+                """), {"tenant_id": tenant_id})
             await connection.execute(text("""
                 INSERT INTO nexus_atende.integrations AS integrations (tenant_id, config)
                 VALUES (:tenant_id, CAST(:config AS jsonb))

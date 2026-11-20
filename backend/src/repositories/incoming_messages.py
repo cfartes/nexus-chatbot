@@ -15,7 +15,7 @@ class IncomingMessageRepository:
     async def save(self, tenant_id: UUID, message: IncomingText, *, bot_enabled: bool = False) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             binding = await connection.scalar(text("""
-                SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND openwa_session_id = :session_id
+                SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND openwa_session_id = :session_id AND openwa_number_verified
             """), {"tenant_id": tenant_id, "session_id": message.session_id})
             if binding is None:
                 return

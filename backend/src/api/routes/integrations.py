@@ -6,6 +6,7 @@ from src.api.routes.auth import administrator, administrator_mutation
 from src.schemas.auth import Operator
 from src.schemas.integrations import AISettings, IntegrationsView, OpenWASettings, ResendSettings
 from src.services.integrations import IntegrationService, IntegrationUnavailable
+from src.services.resend import ResendRejected
 
 router = APIRouter(prefix="/integrations")
 Reader = Annotated[Operator, Depends(administrator)]
@@ -54,3 +55,17 @@ async def openwa(content: OpenWASettings, actor: Writer, service: Service) -> In
         raise HTTPException(503, "Configure a chave de criptografia no servidor") from None
     except ValueError as error:
         raise HTTPException(422, str(error)) from None
+
+
+@router.post("/resend/test", status_code=204)
+async def test_resend(actor: Writer, service: Service) -> Response:
+    client = await service.resend(actor.tenant_id)
+    if client is None:
+        raise HTTPException(422, "Salve a chave e o remetente do Resend antes de testar")
+    try:
+        await client.send_test()
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
+    except ResendRejected as error:
+        raise HTTPException(502, str(error)) from None
+    return Response(status_code=204)

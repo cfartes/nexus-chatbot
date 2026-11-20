@@ -47,7 +47,7 @@ class OutgoingMessageRepository:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             result = await connection.execute(text("""
                 SELECT conversations.state, conversations.assigned_user_id, customers.chat_id,
-                    tenants.openwa_session_id, messages.sender_type, messages.sender_id, messages.content
+                    tenants.openwa_session_id, tenants.openwa_number_verified, messages.sender_type, messages.sender_id, messages.content
                 FROM nexus_atende.conversations AS conversations
                 JOIN nexus_atende.customers AS customers
                     ON (customers.tenant_id, customers.id) = (conversations.tenant_id, conversations.customer_id)
@@ -71,7 +71,7 @@ class OutgoingMessageRepository:
                         and row["assigned_user_id"] == row["sender_id"]):
                 session_id = active.openwa_session_id
                 status = "failed"
-                if session_id and session_id == row["openwa_session_id"]:
+                if session_id and session_id == row["openwa_session_id"] and row["openwa_number_verified"]:
                     dispatch = await send(session_id, row["chat_id"], row["content"])
                     status = dispatch.status
                     if dispatch.provider_id:

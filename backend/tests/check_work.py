@@ -1,8 +1,10 @@
 import asyncio
+from email.message import Message
 import json
 import os
 from hmac import digest
 from io import BytesIO
+from urllib.error import HTTPError
 from unittest.mock import patch
 from uuid import uuid4
 from zipfile import ZipFile
@@ -99,6 +101,9 @@ async def check() -> None:
             }
             status, preview = await call("knowledge", "POST", "preview", {"question": "Quero um atendente"})
             assert status == 200 and json.loads(preview)["status"] == "handoff"
+            with patch("src.services.openai.request_json", side_effect=[vector, completion]):
+                status, preview = await call("knowledge", "POST", "preview", {"question": "Qual o horário do atendimento humano?"})
+            assert status == 200 and json.loads(preview)["status"] == "answered"
 
             for message_id, content in (("work-ai", "Qual é o expediente?"), ("work-human", "Quero falar com um atendente")):
                 raw = json.dumps({"event": "message.received", "sessionId": SESSION, "data": {
@@ -164,6 +169,13 @@ async def check() -> None:
                 "sender": "from@example.test", "recipient": "to@example.test", "api_key": "resend-test-secret",
             })
             assert status == 200 and b"resend-test-secret" not in settings_view
+            with patch("src.services.resend.request_json", return_value={"id": "resend-test-id"}) as test_email:
+                assert (await call("integrations", "POST", "resend/test"))[0] == 204
+                assert test_email.call_args.args[2]["to"] == ["to@example.test"]
+            rejected = HTTPError("https://api.resend.com/emails", 403, "test", hdrs=Message(), fp=None)
+            with patch("src.services.resend.request_json", side_effect=rejected):
+                status, failure = await call("integrations", "POST", "resend/test")
+                assert status == 502 and b"403" in failure
             assert (await call("integrations", "GET", "", admin_only=False))[0] == 403
             assert (await call("integrations", "PUT", "openwa", {"api_key": "openwa-test-secret"}))[0] == 200
             endpoint = "https://secondary-openwa.example.test/api"
@@ -183,17 +195,18 @@ async def check() -> None:
                 assert gateway.call_args.args[0] == f"{endpoint}/sessions/{SESSION}"
             callback = f"https://nexus.example.test/api/v1/webhooks/openwa/{TENANT}"
             active_hook = {"url": callback, "events": ["message.received"], "active": True}
-            with patch("src.services.openwa.request_json", side_effect=[{"data": []}, {"data": {"id": "hook"}}, {"data": [active_hook]}]) as hooks:
+            ready_session = {"status": "READY", "phone": "5511999999999"}
+            with patch("src.services.openwa.request_json", side_effect=[ready_session, {"data": []}, {"data": {"id": "hook"}}, ready_session, {"data": [active_hook]}]) as hooks:
                 await worker.sync_webhook()
                 await worker.sync_webhook()
-            assert hooks.call_count == 3
-            assert hooks.call_args_list[1].args == (f"{endpoint}/sessions/{SESSION}/webhooks", {"X-API-Key": "openwa-test-secret"},
+            assert hooks.call_count == 5
+            assert hooks.call_args_list[2].args == (f"{endpoint}/sessions/{SESSION}/webhooks", {"X-API-Key": "openwa-test-secret"},
                                                       {"url": callback, "events": ["message.received"], "secret": SECRET})
             status, active = await call("integrations", "GET", "")
             assert status == 200 and json.loads(active)["openwa_webhook_status"] == "active"
-            with patch("src.services.openwa.request_json", return_value={"data": [{**active_hook, "active": False}]}) as inactive:
+            with patch("src.services.openwa.request_json", side_effect=[ready_session, {"data": [{**active_hook, "active": False}]}]) as inactive:
                 await worker.sync_webhook()
-            assert inactive.call_count == 1
+            assert inactive.call_count == 2
             status, failed = await call("integrations", "GET", "")
             assert status == 200 and json.loads(failed)["openwa_webhook_status"] == "error"
             async with tenant_transaction(engine, TENANT) as connection:
@@ -216,10 +229,10 @@ async def check() -> None:
             status, waiting = await call("conversations", "GET", "")
             assert status == 200 and conversation_id in {row["id"] for row in json.loads(waiting)}
             assert (await call("integrations", "PUT", "ai", {"provider": "ollama", "model": "test-local"}))[0] == 200
-            with patch("src.services.openai.request_json", return_value={"embeddings": [[1.0] + [0.0] * 767]}) as local:
+            with patch("src.services.openai.request_json") as local:
                 status, body = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
-            assert status == 200 and json.loads(body)["status"] == "handoff"
-            assert local.call_args.args[0] == "http://127.0.0.1:11434/api/embed"
+            assert status == 200 and json.loads(body)["status"] == "unavailable" and b"Reimporte" in body
+            local.assert_not_called()
             assert (await call("integrations", "PUT", "ai", {"provider": "gemini", "model": "test-gemini", "api_key": "test-gemini-key"}))[0] == 200
             gemini_vector = {"embeddings": [{"values": [1.0] + [0.0] * 767}]}
             with patch("src.services.openai.request_json", side_effect=[gemini_vector, gemini_vector, completion]) as gemini:
@@ -242,6 +255,20 @@ async def check() -> None:
             explicit = production.model_copy(update={"openwa_allowed_urls": "https://custom.example.test/api"})
             assert explicit.openwa_endpoint() is None
             assert production.model_copy(update={"public_origin": "http://127.0.0.1:3000"}).openwa_endpoint() is None
+
+            async with tenant_transaction(engine, TENANT) as connection:
+                await connection.execute(text("UPDATE nexus_atende.tenants SET openwa_session_id = NULL, openwa_number_verified = false"))
+            with patch("src.services.openwa.request_json", side_effect=[{"data": []}, {"data": {"id": SESSION}}, {"status": "created"}, {"data": {}}]) as pairing:
+                assert (await call("whatsapp", "POST", "connection/pair"))[0] == 204
+            assert pairing.call_args_list[1].args[2] == {"name": f"nexus-atende-{TENANT}"}
+            assert pairing.call_args_list[-1].args[0] == f"{endpoint}/sessions/{SESSION}/start"
+            with patch("src.services.openwa.request_json", return_value={"status": "ready", "phone": "5511999990000"}) as wrong_phone:
+                await worker.sync_webhook()
+                status, wrong_connection = await call("whatsapp", "GET", "connection")
+            assert wrong_phone.call_count == 2
+            assert status == 200 and json.loads(wrong_connection)["status"] == "WRONG_NUMBER"
+            async with tenant_transaction(engine, TENANT) as connection:
+                assert await connection.scalar(text("SELECT openwa_number_verified FROM nexus_atende.tenants")) is False
     finally:
         await engine.dispose()
 

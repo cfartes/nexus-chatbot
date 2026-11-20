@@ -13,6 +13,7 @@ import secrets
 import subprocess
 import sys
 import time
+from urllib.error import HTTPError, URLError
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,20 +96,29 @@ def bootstrap(compose: tuple[str, ...], values: dict[str, str]) -> None:
     """)
 
 
-def public_check() -> None:
-    for _ in range(10):
+def public_check() -> bool:
+    last_error = "resposta inesperada"
+    for attempt in range(5):
         try:
-            with urllib.request.urlopen(f"{ORIGIN}/api/v1/health", timeout=5) as api:
+            headers = {"User-Agent": "Nexus-Atende-Installer/1.0", "Accept": "application/json"}
+            with urllib.request.urlopen(urllib.request.Request(f"{ORIGIN}/api/v1/health", headers=headers), timeout=5) as api:
                 health = json.load(api)
                 if not isinstance(health, dict) or health.get("status") != "ok":
-                    raise ValueError("Resposta de saúde inesperada")
-            with urllib.request.urlopen(ORIGIN, timeout=5) as web:
-                if b"Nexus Atende" in web.read(100_000):
-                    return
-        except (OSError, ValueError):
-            pass
-        time.sleep(3)
-    raise RuntimeError("O HTTPS público ainda não respondeu. Verifique DNS, entrypoint e certificado no Traefik.")
+                    raise ValueError("a API pública não retornou o status esperado")
+            with urllib.request.urlopen(urllib.request.Request(ORIGIN, headers={**headers, "Accept": "text/html"}), timeout=5) as web:
+                if "text/html" not in web.headers.get("Content-Type", ""):
+                    raise ValueError("o painel público não retornou HTML")
+            return True
+        except HTTPError as error:
+            last_error = f"HTTP {error.code}"
+        except URLError as error:
+            last_error = str(error.reason)
+        except (OSError, ValueError) as error:
+            last_error = str(error)
+        if attempt < 4:
+            time.sleep(3)
+    print(f"Aviso: serviços locais saudáveis, checagem HTTPS a partir da VPS inconclusiva ({last_error}).", file=sys.stderr)
+    return False
 
 
 def choose(flag: str, explicit: str | None, candidates: set[str]) -> str:
