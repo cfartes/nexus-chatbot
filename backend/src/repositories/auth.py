@@ -72,3 +72,28 @@ class AuthRepository:
             await connection.execute(text("""
                 DELETE FROM nexus_atende.sessions WHERE tenant_id = :tenant_id AND token_hash = :token_hash
             """), {"tenant_id": tenant_id, "token_hash": token_hash})
+
+    async def password_hash(self, operator: Operator) -> str | None:
+        async with tenant_transaction(self._engine, operator.tenant_id) as connection:
+            stored: str | None = await connection.scalar(text("""
+                SELECT password_hash FROM nexus_atende.users
+                WHERE tenant_id = :tenant_id AND id = :user_id AND is_active
+            """), {"tenant_id": operator.tenant_id, "user_id": operator.id})
+            return stored
+
+    async def change_password(self, operator: Operator, old_hash: str, new_hash: str, session_hash: str) -> bool:
+        values = {"tenant_id": operator.tenant_id, "user_id": operator.id, "old_hash": old_hash,
+                  "new_hash": new_hash, "session_hash": session_hash}
+        async with tenant_transaction(self._engine, operator.tenant_id) as connection:
+            changed = await connection.scalar(text("""
+                UPDATE nexus_atende.users SET password_hash = :new_hash
+                WHERE tenant_id = :tenant_id AND id = :user_id AND is_active AND password_hash = :old_hash
+                RETURNING id
+            """), values)
+            if changed is None:
+                return False
+            await connection.execute(text("""
+                DELETE FROM nexus_atende.sessions
+                WHERE tenant_id = :tenant_id AND user_id = :user_id AND token_hash <> :session_hash
+            """), values)
+            return True

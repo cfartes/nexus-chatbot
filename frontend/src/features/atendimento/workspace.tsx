@@ -8,6 +8,7 @@ import logo from '../../assets/nexus-atende.webp';
 import { api, ApiError, errorMessage, type Conversation, type Operator, type Queue } from './api';
 import { Thread } from './thread';
 import { Settings } from './settings';
+import { PasswordSettings } from './PasswordSettings';
 
 const queues: { id: Queue; label: string }[] = [
   { id: 'waiting', label: 'Em espera' }, { id: 'mine', label: 'Meus atendimentos' },
@@ -51,7 +52,7 @@ export function Workspace() {
   const [rows, setRows] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<string>();
   const [revision, setRevision] = useState(0);
-  const [settings, setSettings] = useState(false);
+  const [view, setView] = useState<'inbox' | 'settings' | 'password'>('inbox');
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
   const refresh = () => setRevision(value => value + 1);
@@ -92,7 +93,7 @@ export function Workspace() {
     catch (failure) {
       if (!(failure instanceof ApiError && failure.status === 401)) { setError(errorMessage(failure)); return; }
     }
-    setOperator(null); setRows([]); setSelected(undefined); setQueue('waiting'); setOffset(0); setSettings(false); setConnected(false);
+    setOperator(null); setRows([]); setSelected(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setConnected(false);
   }
 
   if (operator === undefined) return <main className="p-8" aria-busy>Carregando sessão…</main>;
@@ -102,12 +103,14 @@ export function Workspace() {
     <header className="flex flex-wrap items-center justify-between gap-3 bg-nexus-petroleo px-5 py-4 text-white">
       <h1><Image src={logo} alt="Nexus Atende" className="h-auto w-32 rounded-md" unoptimized /></h1>
       <nav aria-label="Área de trabalho" className="flex flex-wrap items-center gap-4 text-sm">
-        {operator.role === 'admin' && <><button className="underline" onClick={() => setSettings(false)}>Atendimento</button><button className="underline" onClick={() => setSettings(true)}>Configurações</button></>}
+        <button className="underline" onClick={() => setView('inbox')}>Atendimento</button>
+        {operator.role === 'admin' && <button className="underline" onClick={() => setView('settings')}>Configurações</button>}
+        <button className="underline" onClick={() => setView('password')}>Alterar senha</button>
         <p>{operator.name}</p><button className="underline" onClick={logout}>Sair</button>
       </nav>
     </header>
     {error && <p role="alert" className="bg-red-50 px-5 py-2 text-red-800">{error}</p>}
-    {settings ? <Settings /> : <section className="mx-auto grid max-w-screen-2xl gap-4 p-4 md:min-h-[calc(100dvh-3.75rem)] md:grid-cols-[20rem_minmax(0,1fr)]" aria-label="Caixa de entrada">
+    {view === 'password' ? <PasswordSettings /> : view === 'settings' ? <Settings /> : <section className="mx-auto grid max-w-screen-2xl gap-4 p-4 md:min-h-[calc(100dvh-3.75rem)] md:grid-cols-[20rem_minmax(0,1fr)]" aria-label="Caixa de entrada">
       <aside className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
         <header className="grid gap-2 border-b border-slate-200 p-4"><h2 className="text-lg font-semibold">Conversas</h2>
           <p className="text-xs text-slate-600">{connected ? 'Atualizações ao vivo' : 'Atualização periódica'}</p>

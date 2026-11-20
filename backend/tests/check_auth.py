@@ -52,10 +52,26 @@ async def check() -> None:
         csrf = (b"x-csrf-token", cookies["nexus_atende_csrf"].value.encode())
         assert (await request("GET", "me", headers=(cookie,)))[0] == 200
         await check_whatsapp(cookie)
+        status, other_headers, _ = await request("POST", "login", LOGIN, (origin,))
+        assert status == 200
+        other_cookies = SimpleCookie()
+        for name, value in other_headers:
+            if name == b"set-cookie":
+                other_cookies.load(value.decode())
+        other_cookie = (b"cookie", f"nexus_atende_session={other_cookies['nexus_atende_session'].value}".encode())
+        change = b'{"current_password":"test-password-123","new_password":"new-test-password-123"}'
+        assert (await request("PUT", "password", change, (origin, cookie)))[0] == 403
+        assert (await request("PUT", "password", change.replace(b'current_password":"test', b'current_password":"wrong'), (origin, cookie, csrf)))[0] == 403
+        assert (await request("PUT", "password", change, (origin, cookie, csrf)))[0] == 204
+        assert (await request("GET", "me", headers=(other_cookie,)))[0] == 401
+        assert (await request("GET", "me", headers=(cookie,)))[0] == 200
+        assert (await request("POST", "login", LOGIN.replace(b"test-password-123", b"new-test-password-123"), (origin,)))[0] == 200
+        restore = b'{"current_password":"new-test-password-123","new_password":"test-password-123"}'
+        assert (await request("PUT", "password", restore, (origin, cookie, csrf)))[0] == 204
         assert (await request("POST", "logout", headers=(origin, cookie)))[0] == 403
         assert (await request("POST", "logout", headers=(origin, cookie, csrf)))[0] == 204
         assert (await request("GET", "me", headers=(cookie,)))[0] == 401
-        for _ in range(4):
+        for _ in range(2):
             assert (await request("POST", "login", LOGIN.replace(b"test-password-123", b"wrong"), (origin,)))[0] == 401
         assert (await request("POST", "login", LOGIN, (origin,)))[0] == 429
 

@@ -4,8 +4,8 @@ from secrets import compare_digest, token_urlsafe
 from uuid import UUID
 
 from src.repositories.auth import AuthRepository
-from src.schemas.auth import LoginRequest, Operator
-from src.services.passwords import verify_password
+from src.schemas.auth import LoginRequest, Operator, PasswordChange
+from src.services.passwords import hash_password, verify_password
 
 SESSION_SECONDS = 8 * 60 * 60
 _DUMMY_HASH = f"scrypt${'00' * 16}${'00' * 64}"
@@ -70,3 +70,19 @@ class AuthService:
         if not valid_csrf(session, csrf):
             raise PermissionError
         await self._repository.revoke_session(operator.tenant_id, _digest(session))
+
+    async def change_password(self, operator: Operator, session: str, change: PasswordChange) -> None:
+        current = change.current_password.get_secret_value()
+        new = change.new_password.get_secret_value()
+        if current == new:
+            raise ValueError("Escolha uma senha diferente da atual.")
+        identity = _digest(f"password-change:{operator.tenant_id}:{operator.id}")
+        if not await self._repository.record_attempt(identity, _digest(f"{identity}:limit")):
+            raise LoginLimited
+        stored = await self._repository.password_hash(operator)
+        async with self._password_slots:
+            if not stored or not await to_thread(verify_password, current, stored):
+                raise InvalidLogin
+            new_hash = await to_thread(hash_password, new)
+        if not await self._repository.change_password(operator, stored, new_hash, _digest(session)):
+            raise InvalidLogin

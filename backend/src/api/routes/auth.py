@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from src.schemas.auth import LoginRequest, Operator
+from src.schemas.auth import LoginRequest, Operator, PasswordChange
 from src.services.auth import SESSION_SECONDS, AuthService, InvalidLogin, LoginLimited, csrf_token, valid_csrf
 
 router = APIRouter(prefix="/auth")
@@ -82,3 +82,17 @@ async def logout(request: Request, response: Response) -> None:
         raise HTTPException(403, "Token CSRF inválido") from None
     response.delete_cookie(SESSION_COOKIE, secure=True, httponly=True)
     response.delete_cookie(CSRF_COOKIE, secure=True)
+
+
+@router.put("/password", status_code=204)
+async def change_password(
+    content: PasswordChange, request: Request, actor: Annotated[Operator, Depends(mutation_operator)],
+) -> None:
+    try:
+        await _service(request).change_password(actor, request.cookies.get(SESSION_COOKIE, ""), content)
+    except InvalidLogin:
+        raise HTTPException(403, "Confira a senha atual.") from None
+    except LoginLimited:
+        raise HTTPException(429, "Muitas tentativas. Tente novamente em 15 minutos.", headers={"Retry-After": "900"}) from None
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None

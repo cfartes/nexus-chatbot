@@ -130,6 +130,8 @@ O painel em `frontend` usa Next.js App Router, TypeScript, Tailwind e Astryx. In
 
 O logo fornecido para o Nexus Atende aparece no login e no cabeçalho do painel em uma versão WebP.
 
+Administradores e operadores podem alterar a própria senha no menu superior. A API exige a senha atual e encerra as demais sessões da conta após a alteração.
+
 Os cartões de Configurações indicam se faltam dados, se há uma configuração parcial ou falha conhecida, ou se os campos necessários estão preenchidos. A cor da configuração não substitui um teste real do provedor.
 
 Com a API em `http://127.0.0.1:8085`, configure `NEXUS_ATENDE_PUBLIC_ORIGIN=http://127.0.0.1:3000` no backend local. Em `frontend`, execute `corepack pnpm install --frozen-lockfile` e `corepack pnpm dev --hostname 127.0.0.1`. Acesse `http://127.0.0.1:3000`. Defina `NEXUS_ATENDE_API_URL` no ambiente do Next.js para usar outro endereço de API. O navegador usa rotas de mesma origem para sessão e SSE.

@@ -17,5 +17,10 @@ class Operator(BaseModel):
     role: Literal["admin", "operator"]
 
 
+class PasswordChange(BaseModel):
+    current_password: SecretStr = Field(min_length=1, max_length=128)
+    new_password: SecretStr = Field(min_length=12, max_length=128)
+
+
 class LoginIdentity(Operator):
     password_hash: SecretStr
