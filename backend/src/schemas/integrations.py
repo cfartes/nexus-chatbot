@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, SecretStr
 
 Provider = Literal["openai", "gemini", "anthropic", "ollama"]
-WebhookStatus = Literal["not_configured", "pending", "active", "error"]
+WebhookStatus = Literal["not_configured", "pending", "active", "error", "rate_limited"]
 
 
 class AISettings(BaseModel):

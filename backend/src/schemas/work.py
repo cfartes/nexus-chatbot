@@ -21,5 +21,5 @@ class WorkReceipt(BaseModel):
 
 
 class WhatsAppDispatch(BaseModel):
-    status: Literal["sent", "failed", "uncertain"]
+    status: Literal["sent", "failed", "uncertain", "pending"]
     provider_id: str | None = None

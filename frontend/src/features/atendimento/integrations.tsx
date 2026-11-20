@@ -10,12 +10,12 @@ type Provider = keyof typeof models;
 interface IntegrationView {
   provider: Provider; model: string; embedding_model: string; ai_has_key: boolean; embedding_has_key: boolean;
   ollama_url: string | null; resend_sender: string; resend_recipient: string; resend_has_key: boolean;
-  openwa_url: string | null; openwa_webhook_status: 'not_configured' | 'pending' | 'active' | 'error'; openwa_has_key: boolean;
+  openwa_url: string | null; openwa_webhook_status: 'not_configured' | 'pending' | 'active' | 'error' | 'rate_limited'; openwa_has_key: boolean;
   openwa_webhook_error: string | null;
 }
 
 const receptionLabel = { not_configured: 'Aguardando configuração', pending: 'Cadastro automático pendente',
-  active: 'Cadastro confirmado no OpenWA', error: 'Falha no cadastro automático' };
+  active: 'Cadastro confirmado no OpenWA', error: 'Falha no cadastro automático', rate_limited: 'Aguardando o limite do OpenWA' };
 
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
 

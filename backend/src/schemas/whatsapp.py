@@ -8,6 +8,7 @@ class WhatsAppConnection(BaseModel):
     status: str
     phone_number: str | None = None
     error: str | None = None
+    retry_after: int | None = None
 
 
 class WhatsAppQR(BaseModel):

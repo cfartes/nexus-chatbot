@@ -1,7 +1,11 @@
 from asyncio import Semaphore, to_thread
 from base64 import b64decode
 from binascii import Error as Base64Error
+from email.utils import parsedate_to_datetime
+from math import ceil
 from re import fullmatch, sub
+from threading import Lock
+from time import monotonic, time
 from urllib.error import HTTPError, URLError
 from uuid import UUID
 
@@ -16,6 +20,21 @@ _QR_PREFIX = "data:image/png;base64,"
 
 class OpenWAUnavailable(Exception):
     pass
+
+
+class OpenWARateLimited(OpenWAUnavailable):
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__("O OpenWA limitou temporariamente as chamadas (HTTP 429). A consulta será retomada automaticamente.")
+
+
+def _retry_delay(value: str) -> int:
+    try:
+        if value.isascii() and value.isdecimal():
+            return min(86400, max(1, int(value)))
+        return max(1, ceil(parsedate_to_datetime(value).timestamp() - time()))
+    except (ValueError, TypeError, OverflowError, OSError):
+        return 60
 
 
 def account_phone(payload: object, depth: int = 0) -> str | None:
@@ -43,13 +62,41 @@ def account_phone(payload: object, depth: int = 0) -> str | None:
 
 
 class OpenWAClient:
+    _cooldown: dict[str, float] = {}
+    _cooldown_lock = Lock()
+
     def __init__(self, base_url: str, api_key: SecretStr) -> None:
         self._base_url = base_url
         self._api_key = api_key
         self._requests = Semaphore(4)
 
+    def retry_after(self) -> int:
+        with self._cooldown_lock:
+            remaining = self._cooldown.get(self._base_url, 0) - monotonic()
+            if remaining <= 0:
+                self._cooldown.pop(self._base_url, None)
+                return 0
+            return ceil(remaining)
+
+    def _request(self, path: str, payload: object = None) -> object:
+        delay = self.retry_after()
+        if delay:
+            raise OpenWARateLimited(delay)
+        headers = {"X-API-Key": self._api_key.get_secret_value()}
+        try:
+            return request_json(self._base_url + path, headers) if payload is None else request_json(self._base_url + path, headers, payload)
+        except HTTPError as error:
+            if error.code != 429:
+                raise
+            with error:
+                delay = _retry_delay(error.headers.get("Retry-After", "") if error.headers else "")
+            with self._cooldown_lock:
+                deadline = monotonic() + delay
+                self._cooldown[self._base_url] = max(deadline, self._cooldown.get(self._base_url, 0))
+            raise OpenWARateLimited(delay) from None
+
     def _read(self, path: str) -> object:
-        decoded = request_json(self._base_url + path, {"X-API-Key": self._api_key.get_secret_value()})
+        decoded = self._request(path)
         return decoded.get("data", decoded) if isinstance(decoded, dict) else decoded
 
     async def session_status(self, session_id: UUID) -> str:
@@ -67,7 +114,7 @@ class OpenWAClient:
             raise OpenWAUnavailable("O OpenWA não retornou um status de sessão válido.") from None
 
     def _write(self, path: str, payload: object) -> object:
-        result = request_json(self._base_url + path, {"X-API-Key": self._api_key.get_secret_value()}, payload)
+        result = self._request(path, payload)
         if isinstance(result, dict) and result.get("success") is False:
             raise ValueError("Operação recusada pelo OpenWA")
         return result.get("data", result) if isinstance(result, dict) else result
@@ -131,8 +178,7 @@ class OpenWAClient:
                 if matches:
                     raise OpenWAUnavailable("O webhook está inativo ou não inclui o evento de novas mensagens.")
                 if len(hooks) < 100:
-                    result = await to_thread(request_json, self._base_url + path,
-                        {"X-API-Key": self._api_key.get_secret_value()},
+                    result = await to_thread(self._request, path,
                         {"url": url, "events": ["message.received"], "secret": secret.get_secret_value()})
                     if isinstance(result, dict) and result.get("success") is False:
                         raise OpenWAUnavailable("O OpenWA recusou o cadastro do webhook de mensagens.")
@@ -145,8 +191,10 @@ class OpenWAClient:
 
     async def send_text(self, session_id: UUID, chat_id: str, content: str) -> WhatsAppDispatch:
         try:
-            payload = await to_thread(request_json, f"{self._base_url}/sessions/{session_id}/messages/send-text",
-                {"X-API-Key": self._api_key.get_secret_value()}, {"chatId": chat_id, "text": content, "linkPreview": False})
+            payload = await to_thread(self._request, f"/sessions/{session_id}/messages/send-text",
+                {"chatId": chat_id, "text": content, "linkPreview": False})
+        except OpenWARateLimited:
+            return WhatsAppDispatch(status="pending")
         except HTTPError as error:
             return WhatsAppDispatch(status="failed" if 400 <= error.code < 500 and error.code != 408 else "uncertain")
         except (OSError, ValueError):

@@ -3,7 +3,7 @@ from uuid import UUID
 
 from src.repositories.tenants import TenantRepository
 from src.schemas.whatsapp import WhatsAppConnection, WhatsAppQR
-from src.services.openwa import OpenWAUnavailable
+from src.services.openwa import OpenWARateLimited, OpenWAUnavailable
 from src.services.integrations import IntegrationService
 
 _KNOWN_STATES = frozenset({"CREATED", "DISCONNECTED", "STOPPED", "FAILED", "READY", "CONNECTED", "QR_READY", "STARTING",
@@ -34,6 +34,9 @@ class WhatsAppService:
         client = await self._integrations.openwa(tenant_id)
         try:
             status, detected_phone = await client.session_identity(tenant.openwa_session_id) if client else ("NOT_CONFIGURED", None)
+        except OpenWARateLimited as error:
+            return WhatsAppConnection(status="RATE_LIMITED", session_id=tenant.openwa_session_id,
+                                      phone_number=tenant.phone_number, error=str(error), retry_after=error.retry_after)
         except OpenWAUnavailable as error:
             return WhatsAppConnection(status="UNAVAILABLE", session_id=tenant.openwa_session_id,
                                       phone_number=tenant.phone_number, error=str(error) or "Falha ao consultar o OpenWA.")

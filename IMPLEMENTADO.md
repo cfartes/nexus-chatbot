@@ -72,6 +72,8 @@ O teste retorna HTTP 424 quando a API do Nexus Atende detecta uma falha no Resen
 
 O cartão WhatsApp exibe o ID da sessão salvo mesmo quando a consulta ao OpenWA falha. O cartão OpenWA indica separadamente o estado do webhook de recebimento e o motivo da falha de sincronização, quando disponível.
 
+Se o OpenWA limitar as chamadas com HTTP 429, o processo que recebeu a resposta respeita o intervalo do gateway para retomar as consultas e os envios pendentes. O painel indica a espera e mantém o vínculo da sessão.
+
 Em **Configurações → Boas-vindas**, o administrador define o texto que abre atendimentos iniciados por contato direto. A IA cumprimenta clientes cadastrados pelo nome e pelo horário de Brasília. Para novos números, pede o nome, grava a resposta e retoma a pergunta inicial, se houver. O botão **Encerrar atendimento** reinicia esse fluxo na próxima mensagem e preserva o histórico e o cadastro do cliente.
 
 Em **Configurações → Origens de contato**, cadastre o nome e o código do produto e copie o link para sua página. A mensagem pré-preenchida identifica o produto. Quem chega por esse link pula a saudação e informa o nome apenas se o número for novo. O atendente pode ver a origem no cabeçalho da conversa.

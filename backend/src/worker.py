@@ -16,7 +16,7 @@ from src.repositories.tenants import TenantRepository
 from src.repositories.work import WorkRepository
 from src.services.bot import BotService
 from src.services.integrations import IntegrationService, tenant_webhook_secret
-from src.services.openwa import OpenWAUnavailable
+from src.services.openwa import OpenWARateLimited, OpenWAUnavailable
 from src.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,9 @@ class Worker:
                         detail = "O telefone conectado no OpenWA difere do telefone salvo."
                     elif session_status in {"READY", "CONNECTED"}:
                         detail = "Sessão conectada. O OpenWA ainda não informou o telefone para verificação."
+                except OpenWARateLimited as error:
+                    status = "rate_limited"
+                    detail = str(error)
                 except OpenWAUnavailable as error:
                     status = "error"
                     detail = str(error) or "Falha na consulta ao OpenWA."
@@ -71,7 +74,7 @@ class Worker:
     async def run_once(self) -> bool:
         resend = await self._integrations.resend(self._tenant_id)
         openwa = await self._integrations.openwa(self._tenant_id)
-        work = await self._work.claim(self._tenant_id, bool(resend and resend.notifications_enabled), openwa is not None)
+        work = await self._work.claim(self._tenant_id, bool(resend and resend.notifications_enabled), bool(openwa and not openwa.retry_after()))
         if work is None:
             return False
         if work.kind == "rag":
@@ -102,7 +105,7 @@ async def run() -> None:
                     active = [client.id for client in await tenants.clients() if client.archived_at is None]
                     workers = {client_id: workers[client_id] if client_id in workers else Worker(engine, settings, client_id)
                                for client_id in active}
-                    next_refresh = monotonic() + 60
+                    next_refresh = monotonic() + 120
                     for worker in workers.values():
                         await worker.sync_webhook()
                 if monotonic() >= next_cleanup:

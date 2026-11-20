@@ -11,7 +11,7 @@ import { SettingsCard, settingsGrid } from './settings-card';
 type Member = { id: string; name: string; email: string; is_active: boolean; invite_pending: boolean; invite_sent: boolean | null; invite_error?: string | null };
 type Source = { source: string; chunks: number };
 type Origin = { slug: string; name: string };
-type Connection = { status: string; phone_number: string | null; session_id: string | null; error?: string | null };
+type Connection = { status: string; phone_number: string | null; session_id: string | null; error?: string | null; retry_after?: number | null };
 type Preview = { status: 'answered' | 'handoff' | 'unavailable'; message: string; sources: string[] };
 const previewLabel = { answered: 'Resposta automática', handoff: 'Encaminharia para um atendente', unavailable: 'IA indisponível' };
 const connectionLabels: Record<string, string> = {
@@ -20,6 +20,7 @@ const connectionLabels: Record<string, string> = {
   CREATED: 'Sessão criada', DISCONNECTED: 'Desconectado', STOPPED: 'Sessão parada', FAILED: 'Falha na sessão',
   VERIFYING_NUMBER: 'Aguardando confirmação do telefone', WRONG_NUMBER: 'O número pareado difere do telefone salvo',
   UNAVAILABLE: 'Status da sessão indisponível',
+  RATE_LIMITED: 'Aguardando o limite do OpenWA',
   ACTION_REQUIRED: 'Verifique a sessão no OpenWA', UNKNOWN: 'Estado da sessão desconhecido',
 };
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
@@ -73,8 +74,9 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   }, [loadConnection]);
 
   useEffect(() => {
-    if (!connection || !['CREATED', 'STARTING', 'INITIALIZING', 'AUTHENTICATING', 'QR_READY', 'VERIFYING_NUMBER'].includes(connection.status)) return;
-    const timer = window.setInterval(() => { void loadConnection(); }, 5_000);
+    if (!connection || !['CREATED', 'STARTING', 'INITIALIZING', 'AUTHENTICATING', 'QR_READY', 'VERIFYING_NUMBER', 'RATE_LIMITED'].includes(connection.status)) return;
+    const delay = connection.status === 'RATE_LIMITED' ? (connection.retry_after ?? 60) * 1000 : 20_000;
+    const timer = window.setInterval(() => { void loadConnection(); }, delay);
     return () => window.clearInterval(timer);
   }, [connection, loadConnection]);
 

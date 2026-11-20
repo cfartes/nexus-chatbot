@@ -394,6 +394,26 @@ async def check() -> None:
             async with tenant_transaction(engine, pilot_tenant) as connection:
                 assert await connection.scalar(text("SELECT count(*) FROM nexus_atende.messages")) == 1
                 assert await connection.scalar(text("SELECT status FROM nexus_atende.work_items")) == "cancelled"
+
+            retry_headers = Message()
+            retry_headers["Retry-After"] = "90"
+            limited = HTTPError(f"{endpoint}/sessions/{SESSION}", 429, "Rate limited", retry_headers, None)
+            with (patch("src.services.openwa.monotonic", return_value=1000) as clock,
+                  patch("src.services.openwa.request_json", side_effect=[limited, ready_session, {"data": [active_hook]}]) as gateway):
+                await worker.sync_webhook()
+                status, gateway_state = await call("integrations", "GET", "")
+                assert status == 200 and json.loads(gateway_state)["openwa_webhook_status"] == "rate_limited"
+                status, deferred = await call("whatsapp", "GET", "connection")
+                deferred_session = json.loads(deferred)
+                assert status == 200 and deferred_session["status"] == "RATE_LIMITED"
+                assert deferred_session["session_id"] == str(SESSION) and deferred_session["retry_after"] == 90
+                await worker.sync_webhook()
+                assert gateway.call_count == 1
+                clock.return_value = 1091
+                await worker.sync_webhook()
+                assert gateway.call_count == 3
+                status, recovered = await call("integrations", "GET", "")
+                assert status == 200 and json.loads(recovered)["openwa_webhook_status"] == "active"
     finally:
         await engine.dispose()
 
