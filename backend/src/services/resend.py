@@ -1,4 +1,5 @@
 from asyncio import to_thread
+from json import loads
 import logging
 from urllib.error import HTTPError
 from uuid import uuid4
@@ -31,32 +32,24 @@ class ResendClient:
         }, {"from": self._sender, "to": [recipient], "subject": subject, "text": content})
         return isinstance(response, dict) and bool(response.get("id"))
 
-    async def invite(self, recipient: str, url: str, key: str) -> bool:
-        try:
-            return await self._send(recipient, "Nexus Atende | Defina sua senha",
-                f"Você recebeu um convite para operar o Nexus Atende. Defina sua senha neste link, válido por 24 horas:\n\n{url}",
-                f"nexus-atende/invite/{key}")
-        except HTTPError as error:
-            logger.warning("Resend rejected operator invitation: HTTP %s", error.code)
-            return False
-        except (OSError, ValueError) as error:
-            logger.warning("Could not send operator invitation (%s)", type(error).__name__)
-            return False
+    async def invite(self, recipient: str, url: str, key: str) -> None:
+        await self._send_checked(recipient, "Nexus Atende | Defina sua senha",
+            f"Você recebeu um convite para operar o Nexus Atende. Defina sua senha neste link, válido por 24 horas:\n\n{url}",
+            f"nexus-atende/invite/{key}")
 
     async def send_test(self) -> None:
         if not self._recipient:
             raise ValueError("Salve o e-mail da equipe para receber o teste")
+        await self._send_checked(self._recipient, "Nexus Atende | Teste do Resend",
+            "O Resend aceitou o envio de teste do Nexus Atende.", f"nexus-atende/test/{uuid4()}")
+
+    async def _send_checked(self, recipient: str, subject: str, content: str, key: str) -> None:
         try:
-            accepted = await self._send(self._recipient, "Nexus Atende | Teste do Resend",
-                "O Resend aceitou o envio de teste do Nexus Atende.", f"nexus-atende/test/{uuid4()}")
+            accepted = await self._send(recipient, subject, content, key)
         except HTTPError as error:
-            messages = {
-                401: "Confira a chave da API",
-                403: "Confira o domínio do remetente, a permissão da chave e os destinatários permitidos",
-                422: "Confira os endereços do remetente e do destinatário",
-                429: "O limite de envios foi atingido. Aguarde e tente novamente",
-            }
-            raise ResendRejected(f"Resend recusou o teste (HTTP {error.code}). {messages.get(error.code, 'Tente novamente mais tarde')}.") from None
+            logger.warning("Resend rejected email: HTTP %s", error.code)
+            message = await to_thread(_rejection_hint, error)
+            raise ResendRejected(f"Resend recusou o envio (HTTP {error.code}). {message}") from None
         except (OSError, ValueError):
             raise ResendRejected("Não foi possível confirmar o envio no Resend. Confira a conexão e tente novamente.") from None
         if not accepted:
@@ -74,3 +67,25 @@ class ResendClient:
         except (OSError, ValueError):
             return retry
         return "sent" if accepted else retry
+
+
+def _rejection_hint(error: HTTPError) -> str:
+    with error:
+        try:
+            payload: object = loads(error.read(8192))
+        except (OSError, ValueError):
+            payload = None
+    reason = str(payload.get("message", "")).lower() if isinstance(payload, dict) else ""
+    if error.code == 403 and "only send testing emails" in reason:
+        return "O remetente de teste só pode enviar para o e-mail da conta Resend. Use um remetente de domínio verificado."
+    if error.code == 403 and "domain is not verified" in reason:
+        return "Verifique o domínio do remetente no Resend e confira o endereço salvo no painel."
+    if "api key is invalid" in reason:
+        return "Confira a chave da API."
+    return {
+        400: "Confira os endereços e a chave do Resend.",
+        401: "Confira a chave da API.",
+        403: "Confira o domínio do remetente, a permissão da chave e os destinatários permitidos.",
+        422: "Confira os endereços do remetente e do destinatário.",
+        429: "O limite de envios foi atingido. Aguarde e tente novamente.",
+    }.get(error.code, "Tente novamente mais tarde.")

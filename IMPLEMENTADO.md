@@ -66,7 +66,7 @@ Em **Configurações → WhatsApp**, informe o número da empresa com DDI e DDD.
 
 Use **Iniciar pareamento** depois de salvar o telefone e a chave do OpenWA. Com uma chave que pode listar e criar sessões, o painel prepara a sessão dedicada do Nexus e exibe o QR Code quando disponível. Se a chave estiver restrita a uma sessão, vincule o UUID existente na implantação. O worker confirma o número pareado antes de ativar o recebimento.
 
-Use **Enviar e-mail de teste** no cartão Resend para verificar se o provedor aceita um e-mail ao destinatário salvo. Em caso de recusa, o painel mostra o código HTTP e os pontos a conferir. Para convites e alertas, a recusa também aparece no log do processo responsável, sem incluir chaves ou conteúdo.
+Use **Enviar e-mail de teste** no cartão Resend para verificar se o provedor aceita um e-mail ao destinatário salvo. Se o Resend recusar um teste ou convite, o painel mostra o código HTTP e orienta o administrador a verificar a configuração. O log registra o código da recusa.
 
 Em **Configurações → Boas-vindas**, o administrador define o texto que abre a primeira resposta automática e uma nova sessão após 15 minutos sem interação. A saudação também acompanha o primeiro encaminhamento automático para a fila humana. Para o acervo da Nexus, cadastre fontes distintas por serviço ou aplicativo. A importação web lê uma página por URL da origem HTTPS configurada.
 

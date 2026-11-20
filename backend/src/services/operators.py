@@ -8,7 +8,7 @@ from src.repositories.operators import OperatorRepository
 from src.schemas.operators import AcceptInvite, OperatorCreate, OperatorRecord, OperatorUpdate
 from src.services.integrations import IntegrationService, IntegrationUnavailable
 from src.services.passwords import hash_password
-from src.services.resend import ResendClient
+from src.services.resend import ResendClient, ResendRejected
 
 
 class OperatorService:
@@ -30,7 +30,7 @@ class OperatorService:
         invite_hash = sha256(token.encode()).hexdigest()
         member = await self._repository.create(tenant_id, name, operator.email.lower(), invite_hash)
         if member:
-            member.invite_sent = await resend.invite(member.email, f"{origin}/convite#{token}", invite_hash)
+            await self._send_invitation(member, resend, f"{origin}/convite#{token}", invite_hash)
         return member
 
     async def _invitation_sender(self, tenant_id: UUID) -> tuple[ResendClient, str]:
@@ -52,8 +52,17 @@ class OperatorService:
         invite_hash = sha256(token.encode()).hexdigest()
         member = await self._repository.renew(tenant_id, user_id, invite_hash)
         if member:
-            member.invite_sent = await resend.invite(member.email, f"{origin}/convite#{token}", invite_hash)
+            await self._send_invitation(member, resend, f"{origin}/convite#{token}", invite_hash)
         return member
+
+    async def _send_invitation(self, member: OperatorRecord, resend: ResendClient, url: str, invite_hash: str) -> None:
+        try:
+            await resend.invite(member.email, url, invite_hash)
+        except ResendRejected as error:
+            member.invite_sent = False
+            member.invite_error = str(error)
+        else:
+            member.invite_sent = True
 
     async def accept(self, request: AcceptInvite) -> bool:
         token = request.token.get_secret_value()

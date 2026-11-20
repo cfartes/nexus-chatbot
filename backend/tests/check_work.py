@@ -217,6 +217,15 @@ async def check() -> None:
                 member = json.loads(created)
                 assert status == 201 and member["invite_sent"] and not member["is_active"], (status, created)
                 original = email.call_args.args[2]["text"].split("#")[-1]
+            testing_only = HTTPError("https://api.resend.com/emails", 403, "Forbidden", Message(),
+                                     BytesIO(b'{"message":"You can only send testing emails to private@example.test"}'))
+            with patch("src.services.resend.request_json", side_effect=testing_only):
+                status, invite_response = await call("operators", "POST", f"{member['id']}/invite")
+            failed_invite = json.loads(invite_response)
+            assert status == 200 and failed_invite["invite_pending"] and not failed_invite["invite_sent"]
+            assert "HTTP 403" in failed_invite["invite_error"] and "domínio verificado" in failed_invite["invite_error"]
+            assert b"private@example.test" not in invite_response
+            with patch("src.services.resend.request_json", return_value={"id": "renewed-email"}) as email:
                 assert (await call("operators", "POST", f"{member['id']}/invite"))[0] == 200
                 renewed = email.call_args.args[2]["text"].split("#")[-1]
             assert (await call("operators", "POST", "accept-invite", {"token": original, "password": "test-password-123"}))[0] == 400

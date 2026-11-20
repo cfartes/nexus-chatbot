@@ -20,6 +20,7 @@ class OperatorRecord(BaseModel):
     is_active: bool
     invite_pending: bool = False
     invite_sent: bool | None = None
+    invite_error: str | None = None
 
 
 class AcceptInvite(BaseModel):

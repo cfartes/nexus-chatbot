@@ -7,7 +7,7 @@ import { api, ApiError, errorMessage } from './api';
 import { Integrations } from './integrations';
 import { SettingsCard, settingsGrid } from './settings-card';
 
-type Member = { id: string; name: string; email: string; is_active: boolean; invite_pending: boolean; invite_sent: boolean | null };
+type Member = { id: string; name: string; email: string; is_active: boolean; invite_pending: boolean; invite_sent: boolean | null; invite_error?: string | null };
 type Source = { source: string; chunks: number };
 type Connection = { status: string; phone_number: string | null; session_id: string | null };
 type Preview = { status: 'answered' | 'handoff' | 'unavailable'; message: string; sources: string[] };
@@ -81,7 +81,7 @@ export function Settings() {
     void run(async () => {
       const member = await api<Member>('/operators', { method: 'POST', body: JSON.stringify(values) });
       setMembers(current => [...(current ?? []), member]); form.reset();
-      if (!member.invite_sent) throw new ApiError(502, 'Operador cadastrado. O e-mail falhou. Use Reenviar convite.');
+      if (!member.invite_sent) throw new ApiError(502, `Operador cadastrado. ${member.invite_error ?? 'O e-mail falhou.'} Use Reenviar convite.`);
     }, 'Convite enviado.');
   }
 
@@ -145,7 +145,7 @@ export function Settings() {
           <p className="break-all text-sm">{member.name}<br />{member.email}<br />{member.invite_pending ? 'Convite pendente' : member.is_active ? 'Ativo' : 'Desativado'}</p>
           {member.invite_pending ? <Button label="Reenviar convite" isDisabled={busy} onClick={() => void run(async () => {
             const result = await api<Member>(`/operators/${member.id}/invite`, { method: 'POST' });
-            if (!result.invite_sent) throw new ApiError(502, 'Não foi possível enviar o convite.');
+            if (!result.invite_sent) throw new ApiError(502, result.invite_error ?? 'Não foi possível enviar o convite.');
           }, 'Convite reenviado.')} /> : <Button label={member.is_active ? 'Desativar' : 'Reativar'} isDisabled={busy} onClick={() => {
             if (member.is_active && !window.confirm(`Desativar ${member.name}? As conversas voltarão à fila.`)) return;
             void run(async () => {
