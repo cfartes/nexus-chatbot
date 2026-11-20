@@ -22,13 +22,14 @@ async def enqueue(
 
 
 async def finish(
-    connection: AsyncConnection, tenant_id: UUID, work_id: UUID, status: WorkStatus,
+    connection: AsyncConnection, tenant_id: UUID, work_id: UUID, status: WorkStatus, *, retry_after: int = 30,
 ) -> None:
     await connection.execute(text("""
         UPDATE nexus_atende.work_items SET status = :status,
-            available_at = CASE WHEN :status = 'pending' THEN now() + interval '30 seconds' ELSE available_at END
+            available_at = CASE WHEN :status = 'pending'
+                THEN clock_timestamp() + make_interval(secs => :retry_after) ELSE available_at END
         WHERE tenant_id = :tenant_id AND id = :id AND status = 'processing'
-    """), {"tenant_id": tenant_id, "id": work_id, "status": status})
+    """), {"tenant_id": tenant_id, "id": work_id, "status": status, "retry_after": retry_after})
 
 
 class WorkRepository:

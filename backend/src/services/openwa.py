@@ -2,6 +2,7 @@ from asyncio import Semaphore, to_thread
 from base64 import b64decode
 from binascii import Error as Base64Error
 from email.utils import parsedate_to_datetime
+import logging
 from math import ceil
 from re import fullmatch, sub
 from threading import Lock
@@ -16,6 +17,7 @@ from src.schemas.work import WhatsAppDispatch
 from src.services.provider_http import request_json
 
 _QR_PREFIX = "data:image/png;base64,"
+logger = logging.getLogger(__name__)
 
 
 class OpenWAUnavailable(Exception):
@@ -193,8 +195,9 @@ class OpenWAClient:
         try:
             payload = await to_thread(self._request, f"/sessions/{session_id}/messages/send-text",
                 {"chatId": chat_id, "text": content, "linkPreview": False})
-        except OpenWARateLimited:
-            return WhatsAppDispatch(status="pending")
+        except OpenWARateLimited as error:
+            logger.warning("OpenWA deferred WhatsApp delivery for %s seconds (HTTP 429)", error.retry_after)
+            return WhatsAppDispatch(status="pending", retry_after=error.retry_after)
         except HTTPError as error:
             return WhatsAppDispatch(status="failed" if 400 <= error.code < 500 and error.code != 408 else "uncertain")
         except (OSError, ValueError):

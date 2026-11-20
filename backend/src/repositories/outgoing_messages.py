@@ -66,14 +66,19 @@ class OutgoingMessageRepository:
             if active is None:
                 return
             status: WorkStatus = "cancelled"
+            retry_after = 30
             if row and (row["sender_type"] == "bot" and row["state"] == ("waiting" if active.allow_waiting else "bot")
                         or row["sender_type"] == "operator" and row["state"] == "assigned"
                         and row["assigned_user_id"] == row["sender_id"]):
                 session_id = active.openwa_session_id
                 status = "failed"
-                if session_id and session_id == row["openwa_session_id"] and row["openwa_number_verified"]:
+                if session_id and session_id == row["openwa_session_id"] and not row["openwa_number_verified"]:
+                    status = "pending"
+                elif session_id and session_id == row["openwa_session_id"]:
                     dispatch = await send(session_id, row["chat_id"], row["content"])
                     status = dispatch.status
+                    if dispatch.retry_after is not None:
+                        retry_after = dispatch.retry_after
                     if dispatch.provider_id:
                         await connection.execute(text("""
                             UPDATE nexus_atende.messages SET openwa_session_id = :session_id, openwa_message_id = :provider_id
@@ -84,4 +89,4 @@ class OutgoingMessageRepository:
                             UPDATE nexus_atende.conversations SET last_interaction = greatest(last_interaction, now())
                             WHERE tenant_id = :tenant_id AND id = :conversation_id
                         """), {"tenant_id": tenant_id, "conversation_id": work.conversation_id})
-            await finish(connection, tenant_id, work.id, status)
+            await finish(connection, tenant_id, work.id, status, retry_after=retry_after)

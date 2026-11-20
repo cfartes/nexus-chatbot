@@ -21,6 +21,7 @@ from src.main import app
 from src.repositories.database import tenant_transaction
 from src.repositories.events import EventRepository
 from src.repositories.integrations import IntegrationRepository
+from src.repositories.work import enqueue
 from src.schemas.integrations import OpenWASettings
 from src.services.integrations import IntegrationService, tenant_webhook_secret
 from src.settings import Settings
@@ -434,6 +435,38 @@ async def check() -> None:
                 assert gateway.call_count == 3
                 status, recovered = await call("integrations", "GET", "")
                 assert status == 200 and json.loads(recovered)["openwa_webhook_status"] == "active"
+
+            conversation = UUID(bot_id)
+            assert (await call("integrations", "PUT", "handoff-email", {"email": ""}))[0] == 200
+            async with tenant_transaction(engine, TENANT) as connection:
+                for answer in ("Primeira resposta", "Segunda resposta"):
+                    outgoing_id = await connection.scalar(text("""
+                        INSERT INTO nexus_atende.messages (tenant_id, conversation_id, sender_type, content)
+                        VALUES (:tenant, :conversation, 'bot', :answer) RETURNING id
+                    """), {"tenant": TENANT, "conversation": conversation, "answer": answer})
+                    await enqueue(connection, TENANT, conversation, "whatsapp", outgoing_id)
+            limited_send = HTTPError(f"{endpoint}/sessions/{SESSION}/messages/send-text", 429, "Rate limited", retry_headers, None)
+            with (patch("src.services.openwa.monotonic", return_value=1200) as clock,
+                  patch("src.services.openwa.request_json", side_effect=[
+                      limited_send, {"data": {"messageId": str(uuid4())}}, {"data": {"messageId": str(uuid4())}},
+                  ]) as delivery):
+                assert await worker.run_once()
+                assert not await worker.run_once()
+                async with tenant_transaction(engine, TENANT) as connection:
+                    pending = await connection.execute(text("""
+                        SELECT status, extract(epoch FROM available_at - now()) AS seconds FROM nexus_atende.work_items
+                        WHERE kind = 'whatsapp' AND status = 'pending' ORDER BY created_at
+                    """))
+                    items = pending.all()
+                    assert len(items) == 2 and 85 <= items[0].seconds <= 90
+                    await connection.execute(text("""
+                        UPDATE nexus_atende.work_items SET available_at = now() WHERE kind = 'whatsapp' AND status = 'pending'
+                    """))
+                clock.return_value = 1291
+                await drain()
+                assert [call.args[2]["text"] for call in delivery.call_args_list] == [
+                    "Primeira resposta", "Primeira resposta", "Segunda resposta",
+                ]
     finally:
         await engine.dispose()
 

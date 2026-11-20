@@ -23,3 +23,4 @@ class WorkReceipt(BaseModel):
 class WhatsAppDispatch(BaseModel):
     status: Literal["sent", "failed", "uncertain", "pending"]
     provider_id: str | None = None
+    retry_after: int | None = None

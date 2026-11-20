@@ -99,20 +99,27 @@ async def run() -> None:
         auth = AuthRepository(engine)
         next_refresh = 0.0
         next_cleanup = 0.0
+        next_sync: dict[UUID, float] = {}
         while True:
             try:
                 if monotonic() >= next_refresh:
                     active = [client.id for client in await tenants.clients() if client.archived_at is None]
                     workers = {client_id: workers[client_id] if client_id in workers else Worker(engine, settings, client_id)
                                for client_id in active}
+                    next_sync = {client_id: next_sync.get(client_id, 0.0) for client_id in active}
                     next_refresh = monotonic() + 120
-                    for worker in workers.values():
-                        await worker.sync_webhook()
                 if monotonic() >= next_cleanup:
                     for client_id in workers:
                         await auth.prune(client_id)
                     next_cleanup = monotonic() + 3600
-                processed = [await worker.run_once() for worker in workers.values()]
+                processed = []
+                for client_id, worker in workers.items():
+                    # Give queued work the first provider call when a cooldown ends.
+                    did_work = await worker.run_once()
+                    processed.append(did_work)
+                    if not did_work and monotonic() >= next_sync[client_id]:
+                        await worker.sync_webhook()
+                        next_sync[client_id] = monotonic() + 120
                 if any(processed):
                     continue
             except SQLAlchemyError as error:
