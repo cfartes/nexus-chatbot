@@ -68,7 +68,11 @@ Use **Iniciar pareamento** depois de salvar o telefone e a chave do OpenWA. Com 
 
 Use **Enviar e-mail de teste** no cartão Resend para verificar se o provedor aceita um e-mail ao destinatário salvo. Se o Resend recusar um teste ou convite, o painel mostra o código HTTP e orienta o administrador a verificar a configuração. O log registra o código da recusa.
 
-Em **Configurações → Boas-vindas**, o administrador define o texto que abre a primeira resposta automática e uma nova sessão após 15 minutos sem interação. A saudação também acompanha o primeiro encaminhamento automático para a fila humana. Para o acervo da Nexus, cadastre fontes distintas por serviço ou aplicativo. A importação web lê uma página por URL da origem HTTPS configurada.
+Em **Configurações → Boas-vindas**, o administrador define o texto que abre atendimentos iniciados por contato direto. A IA cumprimenta clientes cadastrados pelo nome e pelo horário de Brasília. Para novos números, pede o nome, grava a resposta e retoma a pergunta inicial, se houver. O botão **Encerrar atendimento** reinicia esse fluxo na próxima mensagem e preserva o histórico e o cadastro do cliente.
+
+Em **Configurações → Origens de contato**, cadastre o nome e o código do produto e copie o link para sua página. A mensagem pré-preenchida identifica o produto. Quem chega por esse link pula a saudação e informa o nome apenas se o número for novo. O atendente pode ver a origem no cabeçalho da conversa.
+
+Para o acervo da Nexus, cadastre fontes distintas por serviço ou aplicativo. A importação web lê uma página por URL da origem HTTPS configurada.
 
 O teste da IA distingue uma pergunta sem cobertura de uma base vazia, vetores incompatíveis e erros do provedor. Se as fontes foram importadas com outro modelo de embeddings, reimporte-as para tornar o conteúdo disponível no modelo atual.
 

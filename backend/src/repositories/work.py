@@ -12,11 +12,11 @@ async def enqueue(
     kind: WorkKind, message_id: UUID | None = None, *, allow_waiting: bool = False,
 ) -> None:
     await connection.execute(text("""
-        INSERT INTO nexus_atende.work_items (tenant_id, conversation_id, kind, message_id, allow_waiting, openwa_session_id)
+        INSERT INTO nexus_atende.work_items (tenant_id, conversation_id, kind, message_id, allow_waiting, openwa_session_id, created_at)
         VALUES (:tenant_id, :conversation_id, :kind, :message_id, :allow_waiting,
             CASE WHEN :kind = 'whatsapp' THEN (
                 SELECT openwa_session_id FROM nexus_atende.tenants WHERE id = :tenant_id
-            ) ELSE NULL END)
+            ) ELSE NULL END, clock_timestamp())
     """), {"tenant_id": tenant_id, "conversation_id": conversation_id, "kind": kind,
             "message_id": message_id, "allow_waiting": allow_waiting})
 

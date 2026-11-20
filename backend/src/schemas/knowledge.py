@@ -1,6 +1,14 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+
+OriginSlug = Annotated[str, StringConstraints(max_length=50, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
+
+
+class ContactOrigin(BaseModel):
+    slug: OriginSlug
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[^\x00-\x1f\x7f\[\]]+$")]
 
 
 class KnowledgeInput(BaseModel):
@@ -49,3 +57,14 @@ class BotContext(BaseModel):
     previous_summary: str | None
     recent: list[str]
     previous: list[str]
+    opening_pending: bool = False
+    opening_question: str | None = None
+    origin_slug: str | None = None
+    origin_name: str | None = None
+    local_hour: int = 0
+
+
+class OpeningUpdate(BaseModel):
+    origin_slug: str | None
+    pending_question: str | None = None
+    customer_name: str | None = None

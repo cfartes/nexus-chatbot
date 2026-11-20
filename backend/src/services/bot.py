@@ -1,16 +1,18 @@
 import logging
-from re import search
+from re import IGNORECASE, fullmatch, search, sub
 from unicodedata import normalize
 from uuid import UUID
 
 from src.repositories.bot import BotRepository
 from src.repositories.knowledge import KnowledgeRepository
-from src.schemas.knowledge import BotContext, PreviewResult
+from src.schemas.knowledge import BotContext, OpeningUpdate, PreviewResult
 from src.schemas.work import WorkItem
 from src.services.integrations import IntegrationService
 
 FALLBACK = "Vou encaminhar sua conversa para a equipe da Nexus. Um atendente continuará o atendimento aqui."
 TECHNICAL = "Estou com uma dificuldade técnica no momento. Vou chamar a equipe da Nexus para continuar o atendimento."
+ASK_NAME = "Como posso chamar você?"
+ASK_SUBJECT = "Como posso ajudar?"
 logger = logging.getLogger(__name__)
 
 
@@ -22,10 +24,53 @@ class BotService:
 
     async def process(self, tenant_id: UUID, work: WorkItem) -> None:
         context = await self._repository.context(tenant_id, work)
-        result, summary = await self._answer(tenant_id, context) if context is not None else (None, None)
-        answer = result.message if result is not None and result.status == "answered" else None
-        fallback = TECHNICAL if result is None or result.status == "unavailable" else result.message
-        await self._repository.resolve(tenant_id, work, answer, fallback, summary)
+        if context is None:
+            await self._repository.resolve(tenant_id, work, None, TECHNICAL, None)
+            return
+
+        prefix = ""
+        opening = None
+        question = context.question.strip()
+        if context.opening_pending:
+            marker = search(r"^Olá, vim pelo [^\[\]\r\n]+\. \[Nexus:([a-z0-9-]{1,50})\]", question, flags=IGNORECASE)
+            if marker is not None:
+                question = question[marker.end():].strip()
+                context.origin_name = await self._knowledge.origin(tenant_id, marker[1].lower())
+                if context.origin_name is not None:
+                    context.origin_slug = marker[1].lower()
+            if context.origin_slug is None:
+                prefix = context.welcome_message or "Olá!"
+                if context.name:
+                    greeting = "Bom dia" if 5 <= context.local_hour < 12 else "Boa tarde" if 12 <= context.local_hour < 18 else "Boa noite"
+                    prefix += f"\n\n{greeting}, {context.name}!"
+            opening = OpeningUpdate(origin_slug=context.origin_slug)
+            if _generic(question):
+                question = ""
+            if not context.name:
+                opening.pending_question = question
+                await self._repository.resolve(tenant_id, work, _prefixed(prefix, ASK_NAME), TECHNICAL, None, opening)
+                return
+        elif context.opening_question is not None:
+            name = _customer_name(question)
+            if name is None:
+                if not context.opening_question and not _generic(question):
+                    opening = OpeningUpdate(origin_slug=context.origin_slug, pending_question=question)
+                await self._repository.resolve(tenant_id, work, ASK_NAME, TECHNICAL, None, opening)
+                return
+            context.name = name
+            opening = OpeningUpdate(origin_slug=context.origin_slug, customer_name=name)
+            prefix = f"Prazer, {name}!"
+            question = context.opening_question
+
+        if not question or (not context.recent and _generic(question)):
+            await self._repository.resolve(tenant_id, work, _prefixed(prefix, ASK_SUBJECT), TECHNICAL, None, opening)
+            return
+        context.question = question
+        context.welcome_message = ""
+        result, summary = await self._answer(tenant_id, context)
+        answer = _prefixed(prefix, result.message) if result.status == "answered" else None
+        fallback = TECHNICAL if result.status == "unavailable" else result.message
+        await self._repository.resolve(tenant_id, work, answer, _prefixed(prefix, fallback), summary, opening)
 
     async def preview(self, tenant_id: UUID, question: str) -> PreviewResult:
         welcome_message = await self._knowledge.welcome(tenant_id)
@@ -37,7 +82,7 @@ class BotService:
     async def _answer(self, tenant_id: UUID, context: BotContext) -> tuple[PreviewResult, str | None]:
         welcome = f"{context.welcome_message}\n\n" if not context.recent and context.welcome_message else ""
         fallback = welcome + FALLBACK
-        normalized = normalize("NFKD", context.question.casefold()).encode("ascii", "ignore").decode()
+        normalized = _normalized(context.question)
         if search(r"^(um |uma )?(atendente|operador)[!. ]*$|\b(quero (um |uma )?(atendente|operador|atendimento humano)|falar com (um atendente|uma pessoa|o suporte|suporte))\b", normalized):
             return PreviewResult(status="handoff", message=fallback, sources=[]), None
         client = await self._integrations.ai(tenant_id)
@@ -56,7 +101,8 @@ class BotService:
                 logger.warning("Conversation recap unavailable (%s)", type(error).__name__)
         sources: list[str] = []
         try:
-            knowledge = await self._knowledge.search(tenant_id, await client.embed(context.question[:4000]), client.embedding_space)
+            query = f"{context.origin_name}: {context.question}" if context.origin_name else context.question
+            knowledge = await self._knowledge.search(tenant_id, await client.embed(query[:4000]), client.embedding_space)
             if not knowledge:
                 return PreviewResult(status="unavailable", message="A base mudou durante a consulta. Tente novamente.", sources=[]), summary
             sources = list(dict.fromkeys(match.source for match in knowledge))
@@ -71,3 +117,27 @@ class BotService:
         if not 0 < len(answer) <= 4096 or "\x00" in answer:
             return PreviewResult(status="unavailable", message="O modelo não retornou uma resposta utilizável. Confira o modelo configurado.", sources=sources), summary
         return PreviewResult(status="answered", message=(welcome + answer)[:4096], sources=sources), summary
+
+
+def _normalized(value: str) -> str:
+    return normalize("NFKD", value.casefold()).encode("ascii", "ignore").decode()
+
+
+def _generic(value: str) -> bool:
+    return bool(fullmatch(
+        r"(?:\s*(?:oi+|ola+|opa|e ai|bom dia|boa tarde|boa noite|tudo (?:bem|bom)|como vai|ok|beleza|obrigad[oa])(?: nexus)?\b[\s,.!?;:]*)*",
+        _normalized(value).strip(" .,!?:;"),
+    ))
+
+
+def _customer_name(value: str) -> str | None:
+    name = sub(r"^(?:meu nome [ée]|me chamo|eu sou|sou)\s+", "", value, flags=IGNORECASE).strip(" .!")
+    if not name or len(name) > 100 or _generic(name):
+        return None
+    if search(r"\b(quero|preciso|pode|gostaria|qual|como|onde|quando|atendente|ajuda|suporte)\b", _normalized(name)):
+        return None
+    return name if fullmatch(r"[^\W\d_]+(?:[ '\-’][^\W\d_]+){0,7}", name) else None
+
+
+def _prefixed(prefix: str, message: str) -> str:
+    return (f"{prefix}\n\n{message}" if prefix else message)[:4096]

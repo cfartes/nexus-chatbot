@@ -105,21 +105,33 @@ async def check() -> None:
                 status, preview = await call("knowledge", "POST", "preview", {"question": "Qual o horário do atendimento humano?"})
             assert status == 200 and json.loads(preview)["status"] == "answered"
 
-            for message_id, content in (("work-ai", "Qual é o expediente?"), ("work-human", "Quero falar com um atendente")):
+            async def receive(message_id: str, content: str, phone: str = "5511888888888") -> None:
                 raw = json.dumps({"event": "message.received", "sessionId": SESSION, "data": {
-                    "id": message_id, "from": "5511888888888@c.us", "fromMe": False, "body": content,
+                    "id": message_id, "from": f"{phone}@c.us", "fromMe": False, "body": content,
                 }}).encode()
                 signature = b"sha256=" + digest(SECRET.encode(), raw, "sha256").hex().encode()
                 assert (await request("POST", str(TENANT), raw, ((b"x-openwa-signature", signature),), prefix="webhooks/openwa"))[0] == 204
+
+            async def drain() -> None:
+                for _ in range(10):
+                    if not await worker.run_once():
+                        break
+
+            for message_id, content in (("work-ai", "Qual é o expediente?"), ("work-name", "Meu nome é Ana Souza"),
+                                        ("work-human", "Quero falar com um atendente")):
+                await receive(message_id, content)
                 with (patch("src.services.openwa.request_json", side_effect=lambda *_args: {"data": {"messageId": str(uuid4())}}) as whatsapp,
                       patch("src.services.resend.request_json", return_value={"id": "email-id"}) as resend,
                       patch("src.services.openai.request_json", side_effect=[vector, completion]) as ai):
-                    for _ in range(10):
-                        if not await worker.run_once():
-                            break
+                    await drain()
                     if message_id == "work-ai":
-                        assert whatsapp.call_count == 2 and ai.call_count == 2 and resend.call_count == 1
-                        assert whatsapp.call_args.args[2]["text"] == "Bem-vindo à Nexus!\n\nAtendemos em horário comercial."
+                        assert whatsapp.call_count == 2 and ai.call_count == 0 and resend.call_count == 1
+                        assert whatsapp.call_args.args[2]["text"] == "Bem-vindo à Nexus!\n\nComo posso chamar você?"
+                    elif message_id == "work-name":
+                        assert whatsapp.call_count == 1 and ai.call_count == 2 and resend.call_count == 0
+                        assert whatsapp.call_args.args[2]["text"] == "Prazer, Ana Souza!\n\nAtendemos em horário comercial."
+                        assert "Qual é o expediente?" in str(ai.call_args.args[2])
+                        continue
                     else:
                         assert whatsapp.call_count == 1 and ai.call_count == 0 and resend.call_count == 1
                         assert not whatsapp.call_args.args[2]["text"].startswith("Bem-vindo")
@@ -132,6 +144,7 @@ async def check() -> None:
                                          for row in json.loads(body)) == 1
             status, body = await call("conversations", "GET", "")
             assert status == 200 and json.loads(body)[0]["chat_id"] == "5511888888888@c.us"
+            assert json.loads(body)[0]["customer_name"] == "Ana Souza"
             bot_id = json.loads(body)[0]["id"]
             async with EventRepository(engine).listen(TENANT) as changed:
                 assert (await call("conversations", "PUT", f"{bot_id}/bot", {"active": True}))[0] == 204
@@ -156,6 +169,38 @@ async def check() -> None:
                     SELECT previous_summary FROM nexus_atende.customers WHERE chat_id = '5511888888888@c.us'
                 """))
                 assert summary == "Cliente perguntou sobre o expediente."
+
+            origin = {"name": "RotaFY", "slug": "rotafy"}
+            assert (await call("knowledge", "PUT", "origins", origin, admin_only=False))[0] == 403
+            assert (await call("knowledge", "PUT", "origins", origin))[0] == 200
+            assert json.loads((await call("knowledge", "GET", "origins"))[1]) == [origin]
+            with patch("src.services.openwa.request_json", side_effect=lambda *_args: {"data": {"messageId": str(uuid4())}}) as whatsapp:
+                await drain()
+                assert (await call("conversations", "POST", f"{bot_id}/close", admin_only=False))[0] == 409
+                assert (await call("conversations", "POST", f"{bot_id}/close"))[0] == 204
+                await receive("work-reopen", "Olá, tudo bem?")
+                async with tenant_transaction(engine, TENANT) as connection:
+                    await connection.execute(text("""
+                        UPDATE nexus_atende.messages SET created_at = '2026-11-20 17:00:00+00'
+                        WHERE openwa_message_id = 'work-reopen'
+                    """))
+                await drain()
+                assert whatsapp.call_args.args[2]["text"] == "Bem-vindo à Nexus!\n\nBoa tarde, Ana Souza!\n\nComo posso ajudar?"
+                assert (await call("conversations", "POST", f"{bot_id}/close"))[0] == 204
+                marker = "Olá, vim pelo RotaFY. [Nexus:rotafy]"
+                await receive("work-known-origin", marker)
+                await drain()
+                assert whatsapp.call_args.args[2]["text"] == "Como posso ajudar?"
+                await receive("work-new-origin", f"{marker}\nQual é o expediente?", "5511777777777")
+                await drain()
+                assert whatsapp.call_args.args[2]["text"] == "Como posso chamar você?"
+                await receive("work-new-name", "João", "5511777777777")
+                with patch("src.services.openai.request_json", side_effect=[vector, completion]) as ai:
+                    await drain()
+                assert "RotaFY: Qual é o expediente?" in str(ai.call_args_list[0].args[2])
+                assert whatsapp.call_args.args[2]["text"] == "Prazer, João!\n\nAtendemos em horário comercial."
+            status, _, sourced = await request("GET", "", headers=admin, prefix="conversations", query=b"queue=bot")
+            assert status == 200 and next(row for row in json.loads(sourced) if row["id"] == bot_id)["origin_name"] == "RotaFY"
 
             with patch("src.services.openai.request_json", return_value=vector):
                 for kind, document in (("txt", b"Nexus"), ("docx", sample_docx()), ("pdf", sample_pdf())):

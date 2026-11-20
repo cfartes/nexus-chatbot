@@ -2,6 +2,7 @@
 
 import { Button } from '@astryxdesign/core/Button';
 import { TextArea } from '@astryxdesign/core/TextArea';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, errorMessage } from './api';
 import { Integrations } from './integrations';
@@ -9,6 +10,7 @@ import { SettingsCard, settingsGrid } from './settings-card';
 
 type Member = { id: string; name: string; email: string; is_active: boolean; invite_pending: boolean; invite_sent: boolean | null; invite_error?: string | null };
 type Source = { source: string; chunks: number };
+type Origin = { slug: string; name: string };
 type Connection = { status: string; phone_number: string | null; session_id: string | null };
 type Preview = { status: 'answered' | 'handoff' | 'unavailable'; message: string; sources: string[] };
 const previewLabel = { answered: 'Resposta automática', handoff: 'Encaminharia para um atendente', unavailable: 'IA indisponível' };
@@ -24,6 +26,10 @@ const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
 export function Settings() {
   const [members, setMembers] = useState<Member[]>();
   const [sources, setSources] = useState<Source[]>();
+  const [origins, setOrigins] = useState<Origin[]>();
+  const [originsFailed, setOriginsFailed] = useState(false);
+  const [originName, setOriginName] = useState('');
+  const [originSlug, setOriginSlug] = useState('');
   const [connection, setConnection] = useState<Connection>();
   const [connectionFailed, setConnectionFailed] = useState(false);
   const [membersFailed, setMembersFailed] = useState(false);
@@ -55,6 +61,7 @@ export function Settings() {
   useEffect(() => {
     void api<Member[]>('/operators').then(setMembers).catch(failure => { setMembersFailed(true); setError(errorMessage(failure)); });
     void api<Source[]>('/knowledge').then(setSources).catch(failure => { setSourcesFailed(true); setError(errorMessage(failure)); });
+    void api<Origin[]>('/knowledge/origins').then(setOrigins).catch(failure => { setOriginsFailed(true); setError(errorMessage(failure)); });
     void api<{ message: string }>('/knowledge/welcome').then(value => {
       setWelcome(value.message); setSavedWelcome(value.message);
     }).catch(failure => { setWelcomeFailed(true); setError(errorMessage(failure)); });
@@ -111,6 +118,7 @@ export function Settings() {
     : connection?.phone_number && !connection.session_id ? 'Telefone salvo. Inicie o pareamento.' : connectionLabels[connection?.status ?? ''] ?? 'Salve o telefone da empresa';
   const pendingInvites = members?.some(member => member.invite_pending);
   const activeMember = members?.some(member => member.is_active);
+  const originPhone = connection?.phone_number?.replace(/\D/g, '');
 
   return <section className="mx-auto grid max-w-screen-xl gap-4 p-4" aria-label="Configurações">
     <h2 className="text-2xl font-semibold">Configurações</h2>
@@ -195,6 +203,29 @@ export function Settings() {
           {importKind === 'arquivo' && <label className="grid gap-1 text-sm">Arquivo TXT, PDF ou DOCX<input name="file" required type="file" accept=".txt,.pdf,.docx" className={field} /></label>}
         </form>
       </SettingsCard>
+    <SettingsCard title="Origens de contato" state={originsFailed ? 'warning' : !origins ? 'loading' : !origins.length ? 'missing' : originPhone ? 'ready' : 'warning'} detail={originsFailed ? 'Falha ao consultar origens' : !origins?.length ? 'Cadastre uma origem por produto' : originPhone ? 'Links de WhatsApp disponíveis' : 'Salve o telefone para gerar os links'} action={<Button type="submit" form="settings-origin" label="Salvar origem" variant="primary" isDisabled={busy || !origins || !originName.trim() || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(originSlug)} />}>
+      <form id="settings-origin" className="grid gap-3" onSubmit={event => {
+        event.preventDefault();
+        void run(async () => {
+          await api<Origin>('/knowledge/origins', { method: 'PUT', body: JSON.stringify({ name: originName, slug: originSlug }) });
+          setOrigins(await api<Origin[]>('/knowledge/origins'));
+          setOriginName(''); setOriginSlug('');
+        }, 'Origem salva.');
+      }}>
+        <TextInput label="Nome do produto" value={originName} onChange={value => setOriginName(value.slice(0, 100))} isRequired isDisabled={busy} />
+        <TextInput label="Código da origem" description="Use letras minúsculas, números e hífens. Exemplo rotafy." value={originSlug} onChange={value => setOriginSlug(value.toLowerCase().slice(0, 50))} isRequired isDisabled={busy} />
+      </form>
+      {!!origins?.length && <ul className="grid gap-2">
+        {origins.map(origin => <li key={origin.slug} className="flex flex-wrap items-center justify-between gap-2">
+          <p className="break-all">{origin.name} <small>({origin.slug})</small></p>
+          {originPhone && <Button label={`Copiar link de ${origin.name}`} isDisabled={busy} onClick={() => void run(async () => {
+            const message = `Olá, vim pelo ${origin.name}. [Nexus:${origin.slug}]`;
+            await navigator.clipboard.writeText(`https://wa.me/${originPhone}?text=${encodeURIComponent(message)}`);
+          }, 'Link copiado.')} />}
+        </li>)}
+      </ul>}
+    </SettingsCard>
+
     <SettingsCard title="Boas-vindas" state={welcomeFailed ? 'warning' : savedWelcome === undefined ? 'loading' : savedWelcome ? 'ready' : 'missing'} detail={welcomeFailed ? 'Falha ao consultar a mensagem padrão' : savedWelcome ? 'Mensagem padrão salva' : 'Sem mensagem padrão'} action={<Button type="submit" form="settings-welcome" label="Salvar boas-vindas" variant="primary" isDisabled={busy || welcome === undefined} />}>
       <form id="settings-welcome" className="grid gap-3" onSubmit={event => {
         event.preventDefault();
@@ -205,7 +236,7 @@ export function Settings() {
           setSavedWelcome(saved.message);
         }, 'Mensagem de boas-vindas salva.');
       }}>
-        <TextArea label="Mensagem padrão" description="Aparece na primeira resposta automática e depois de 15 minutos sem interação. Deixe em branco para desativar o texto fixo." value={welcome ?? ''} onChange={setWelcome} maxLength={500} isDisabled={busy || welcome === undefined} />
+        <TextArea label="Mensagem padrão" description="Aparece no início de atendimentos de contato direto. Quando o campo está vazio, o bot usa “Olá!”." value={welcome ?? ''} onChange={setWelcome} maxLength={500} isDisabled={busy || welcome === undefined} />
       </form>
     </SettingsCard>
     <SettingsCard title="Testar a IA" state={previewFailed || preview?.status === 'unavailable' ? 'warning' : preview ? 'ready' : 'missing'} detail={previewFailed ? 'Falha ao executar o teste' : preview ? previewLabel[preview.status] : 'Ainda sem teste nesta tela'} action={<Button type="submit" form="settings-preview" label="Testar resposta" variant="primary" isDisabled={busy || !question.trim()} />}>

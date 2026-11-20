@@ -16,6 +16,7 @@ class ConversationSummary(BaseModel):
     state: Literal["waiting", "bot", "assigned"]
     assigned_user_id: UUID | None
     last_interaction: datetime
+    origin_name: str | None = None
 
 
 class HistoryMessage(BaseModel):

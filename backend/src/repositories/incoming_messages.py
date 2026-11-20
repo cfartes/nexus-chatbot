@@ -38,8 +38,8 @@ class IncomingMessageRepository:
                 SELECT id FROM nexus_atende.customers WHERE tenant_id = :tenant_id AND chat_id = :chat_id
             """), {"tenant_id": tenant_id, "chat_id": message.chat_id})
             new_conversation = await connection.scalar(text("""
-                INSERT INTO nexus_atende.conversations (tenant_id, customer_id, state)
-                VALUES (:tenant_id, :customer_id, :state)
+                INSERT INTO nexus_atende.conversations (tenant_id, customer_id, state, opening_pending)
+                VALUES (:tenant_id, :customer_id, :state, true)
                 ON CONFLICT (tenant_id, customer_id) DO NOTHING RETURNING id
             """), {"tenant_id": tenant_id, "customer_id": customer_id, "state": "bot" if bot_enabled else "waiting"})
             result = await connection.execute(text("""
@@ -49,8 +49,8 @@ class IncomingMessageRepository:
             conversation_id, state = result.one()
             inserted = await connection.scalar(text("""
                 INSERT INTO nexus_atende.messages
-                    (tenant_id, conversation_id, sender_type, openwa_session_id, openwa_message_id, content)
-                VALUES (:tenant_id, :conversation_id, 'customer', :session_id, :message_id, :content)
+                    (tenant_id, conversation_id, sender_type, openwa_session_id, openwa_message_id, content, created_at)
+                VALUES (:tenant_id, :conversation_id, 'customer', :session_id, :message_id, :content, clock_timestamp())
                 ON CONFLICT (tenant_id, openwa_session_id, openwa_message_id) DO NOTHING
                 RETURNING id
             """), {
@@ -59,15 +59,19 @@ class IncomingMessageRepository:
             })
             if inserted is not None:
                 await connection.execute(text("""
-                    UPDATE nexus_atende.customers SET name = coalesce(:name, name),
-                        last_seen_at = greatest(last_seen_at, now()), total_interactions = total_interactions + 1
+                    UPDATE nexus_atende.customers
+                    SET last_seen_at = greatest(last_seen_at, now()), total_interactions = total_interactions + 1
                     WHERE tenant_id = :tenant_id AND id = :customer_id
-                """), {"tenant_id": tenant_id, "customer_id": customer_id, "name": message.display_name})
+                """), {"tenant_id": tenant_id, "customer_id": customer_id})
+                reopened = state == "closed"
+                if reopened:
+                    state = "bot" if bot_enabled else "waiting"
                 await connection.execute(text("""
-                    UPDATE nexus_atende.conversations SET last_interaction = greatest(last_interaction, now())
+                    UPDATE nexus_atende.conversations
+                    SET last_interaction = greatest(last_interaction, now()), state = :state
                     WHERE tenant_id = :tenant_id AND id = :conversation_id
-                """), {"tenant_id": tenant_id, "conversation_id": conversation_id})
+                """), {"tenant_id": tenant_id, "conversation_id": conversation_id, "state": state})
                 if state == "bot":
                     await enqueue(connection, tenant_id, conversation_id, "rag", inserted)
-                elif new_conversation is not None:
+                elif new_conversation is not None or reopened:
                     await enqueue(connection, tenant_id, conversation_id, "notify")

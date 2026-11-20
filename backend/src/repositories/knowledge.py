@@ -4,12 +4,33 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
-from src.schemas.knowledge import KnowledgeMatch, KnowledgeSource
+from src.schemas.knowledge import ContactOrigin, KnowledgeMatch, KnowledgeSource
 
 
 class KnowledgeRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
+
+    async def origins(self, tenant_id: UUID) -> list[ContactOrigin]:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            result = await connection.execute(text("""
+                SELECT slug, name FROM nexus_atende.contact_origins WHERE tenant_id = :tenant_id ORDER BY name, slug
+            """), {"tenant_id": tenant_id})
+            return [ContactOrigin.model_validate(row) for row in result.mappings()]
+
+    async def save_origin(self, tenant_id: UUID, origin: ContactOrigin) -> None:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            await connection.execute(text("""
+                INSERT INTO nexus_atende.contact_origins (tenant_id, slug, name) VALUES (:tenant_id, :slug, :name)
+                ON CONFLICT (tenant_id, slug) DO UPDATE SET name = excluded.name
+            """), {"tenant_id": tenant_id, "slug": origin.slug, "name": origin.name})
+
+    async def origin(self, tenant_id: UUID, slug: str) -> str | None:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            name = await connection.scalar(text("""
+                SELECT name FROM nexus_atende.contact_origins WHERE tenant_id = :tenant_id AND slug = :slug
+            """), {"tenant_id": tenant_id, "slug": slug})
+            return str(name) if name is not None else None
 
     async def welcome(self, tenant_id: UUID, message: str | None = None) -> str:
         async with tenant_transaction(self._engine, tenant_id) as connection:

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from src.api.routes.auth import administrator, administrator_mutation
 from src.schemas.auth import Operator
-from src.schemas.knowledge import KnowledgeInput, KnowledgeSource, KnowledgeURL, PreviewRequest, PreviewResult, WelcomeMessage
+from src.schemas.knowledge import ContactOrigin, KnowledgeInput, KnowledgeSource, KnowledgeURL, PreviewRequest, PreviewResult, WelcomeMessage
 from src.services.bot import BotService
 from src.services.knowledge import KnowledgeService, KnowledgeUnavailable
 from src.services.knowledge_documents import MAX_UPLOAD, DocumentFormat
@@ -41,6 +41,17 @@ async def welcome(actor: Reader, service: Service, response: Response) -> Welcom
 @router.put("/welcome")
 async def update_welcome(content: WelcomeMessage, actor: Writer, service: Service) -> WelcomeMessage:
     return await service.welcome(actor.tenant_id, content)
+
+
+@router.get("/origins")
+async def origins(actor: Reader, service: Service, response: Response) -> list[ContactOrigin]:
+    response.headers["Cache-Control"] = "no-store"
+    return await service.origins(actor.tenant_id)
+
+
+@router.put("/origins")
+async def save_origin(content: ContactOrigin, actor: Writer, service: Service) -> ContactOrigin:
+    return await service.save_origin(actor.tenant_id, content)
 
 
 @router.get("")

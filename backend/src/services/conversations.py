@@ -61,6 +61,10 @@ class ConversationService:
         if not await self._repository.claim(actor, conversation_id):
             raise ConversationUnavailable
 
+    async def close(self, actor: Operator, conversation_id: UUID) -> None:
+        if not await self._repository.close(actor, conversation_id):
+            raise ConversationUnavailable
+
     async def transfer(self, actor: Operator, conversation_id: UUID, user_id: UUID) -> None:
         if actor.role != "admin":
             raise PermissionError

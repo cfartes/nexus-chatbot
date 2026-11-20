@@ -96,6 +96,15 @@ async def claim(conversation_id: UUID, actor: Writer, service: Service) -> Respo
     return Response(status_code=204)
 
 
+@router.post("/{conversation_id}/close", status_code=204)
+async def close(conversation_id: UUID, actor: Writer, service: Service) -> Response:
+    try:
+        await service.close(actor, conversation_id)
+    except ConversationUnavailable:
+        raise HTTPException(409, "Conversa indisponível para encerrar. Aguarde eventuais mensagens em envio.") from None
+    return Response(status_code=204)
+
+
 @router.post("/{conversation_id}/transfer", status_code=204)
 async def transfer(conversation_id: UUID, transfer_request: TransferRequest, actor: Writer, service: Service) -> Response:
     try:

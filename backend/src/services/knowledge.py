@@ -2,7 +2,7 @@ from asyncio import Semaphore, to_thread
 from uuid import UUID
 
 from src.repositories.knowledge import KnowledgeRepository
-from src.schemas.knowledge import KnowledgeInput, KnowledgeSource, WelcomeMessage
+from src.schemas.knowledge import ContactOrigin, KnowledgeInput, KnowledgeSource, WelcomeMessage
 from src.services.knowledge_documents import DocumentFormat, extract_document, extract_url
 from src.services.integrations import IntegrationService
 
@@ -22,6 +22,13 @@ class KnowledgeService:
         return WelcomeMessage(message=await self._repository.welcome(
             tenant_id, content.message.strip() if content is not None else None,
         ))
+
+    async def origins(self, tenant_id: UUID) -> list[ContactOrigin]:
+        return await self._repository.origins(tenant_id)
+
+    async def save_origin(self, tenant_id: UUID, origin: ContactOrigin) -> ContactOrigin:
+        await self._repository.save_origin(tenant_id, origin)
+        return origin
 
     async def ingest_document(self, tenant_id: UUID, source: str, kind: DocumentFormat, raw: bytes) -> KnowledgeSource:
         async with self._imports:
