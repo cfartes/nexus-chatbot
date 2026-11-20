@@ -245,10 +245,11 @@ async def check() -> None:
             callback = f"https://nexus.example.test/api/v1/webhooks/openwa/{TENANT}"
             active_hook = {"url": callback, "events": ["message.received"], "active": True}
             ready_session = {"status": "READY", "phone": "5511999999999"}
-            with patch("src.services.openwa.request_json", side_effect=[ready_session, {"data": []}, {"data": {"id": "hook"}}, ready_session, {"data": [active_hook]}]) as hooks:
+            with patch("src.services.openwa.request_json", side_effect=[ready_session, {"data": []}, {"data": {"id": "hook"}}, ready_session, {"data": {"webhooks": [active_hook]}}]) as hooks:
                 await worker.sync_webhook()
                 await worker.sync_webhook()
             assert hooks.call_count == 5
+            assert hooks.call_args_list[1].args[0] == f"{endpoint}/sessions/{SESSION}/webhooks?limit=100"
             assert hooks.call_args_list[2].args == (f"{endpoint}/sessions/{SESSION}/webhooks", {"X-API-Key": "openwa-test-secret"},
                                                       {"url": callback, "events": ["message.received"], "secret": SECRET})
             status, active = await call("integrations", "GET", "")
@@ -258,6 +259,12 @@ async def check() -> None:
             assert inactive.call_count == 2
             status, failed = await call("integrations", "GET", "")
             assert status == 200 and json.loads(failed)["openwa_webhook_status"] == "error"
+            assert "inativo" in json.loads(failed)["openwa_webhook_error"]
+            denied = HTTPError(f"{endpoint}/sessions/{SESSION}", 403, "Forbidden", Message(), None)
+            with patch("src.services.openwa.request_json", side_effect=denied):
+                status, unavailable = await call("whatsapp", "GET", "connection")
+            assert status == 200 and json.loads(unavailable)["session_id"] == str(SESSION)
+            assert json.loads(unavailable)["status"] == "UNAVAILABLE" and b"HTTP 403" in unavailable
             async with tenant_transaction(engine, TENANT) as connection:
                 encrypted = await connection.scalar(text("SELECT config::text FROM nexus_atende.integrations"))
                 assert "resend-test-secret" not in encrypted and "openwa-test-secret" not in encrypted

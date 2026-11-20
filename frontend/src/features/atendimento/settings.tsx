@@ -11,7 +11,7 @@ import { SettingsCard, settingsGrid } from './settings-card';
 type Member = { id: string; name: string; email: string; is_active: boolean; invite_pending: boolean; invite_sent: boolean | null; invite_error?: string | null };
 type Source = { source: string; chunks: number };
 type Origin = { slug: string; name: string };
-type Connection = { status: string; phone_number: string | null; session_id: string | null };
+type Connection = { status: string; phone_number: string | null; session_id: string | null; error?: string | null };
 type Preview = { status: 'answered' | 'handoff' | 'unavailable'; message: string; sources: string[] };
 const previewLabel = { answered: 'Resposta automática', handoff: 'Encaminharia para um atendente', unavailable: 'IA indisponível' };
 const connectionLabels: Record<string, string> = {
@@ -19,6 +19,7 @@ const connectionLabels: Record<string, string> = {
   INITIALIZING: 'Iniciando', AUTHENTICATING: 'Autenticando', NOT_CONFIGURED: 'Sessão não configurada',
   CREATED: 'Sessão criada', DISCONNECTED: 'Desconectado', STOPPED: 'Sessão parada', FAILED: 'Falha na sessão',
   VERIFYING_NUMBER: 'Aguardando confirmação do telefone', WRONG_NUMBER: 'O número pareado difere do telefone salvo',
+  UNAVAILABLE: 'Status da sessão indisponível',
   ACTION_REQUIRED: 'Verifique a sessão no OpenWA', UNKNOWN: 'Estado da sessão desconhecido',
 };
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2';
@@ -31,7 +32,7 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   const [originName, setOriginName] = useState('');
   const [originSlug, setOriginSlug] = useState('');
   const [connection, setConnection] = useState<Connection>();
-  const [connectionFailed, setConnectionFailed] = useState(false);
+  const [connectionError, setConnectionError] = useState('');
   const [membersFailed, setMembersFailed] = useState(false);
   const [sourcesFailed, setSourcesFailed] = useState(false);
   const [welcomeFailed, setWelcomeFailed] = useState(false);
@@ -54,8 +55,11 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
       if (current.status === 'QR_READY' || current.status === 'STARTING') {
         setQr((await api<{ qr_code: string | null }>('/whatsapp/connection/qr')).qr_code);
       } else setQr(null);
-      setConnectionFailed(false);
-    } catch (failure) { setConnectionFailed(true); setQr(null); throw failure; }
+      setConnectionError(current.error ?? '');
+    } catch (failure) {
+      setConnectionError(`WhatsApp · ${errorMessage(failure)}`);
+      setQr(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -65,12 +69,12 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
     void api<{ message: string }>('/knowledge/welcome').then(value => {
       setWelcome(value.message); setSavedWelcome(value.message);
     }).catch(failure => { setWelcomeFailed(true); setError(errorMessage(failure)); });
-    void loadConnection().catch(failure => setError(errorMessage(failure)));
+    void loadConnection();
   }, [loadConnection]);
 
   useEffect(() => {
     if (!connection || !['CREATED', 'STARTING', 'INITIALIZING', 'AUTHENTICATING', 'QR_READY', 'VERIFYING_NUMBER'].includes(connection.status)) return;
-    const timer = window.setInterval(() => { void loadConnection().catch(failure => setError(errorMessage(failure))); }, 5_000);
+    const timer = window.setInterval(() => { void loadConnection(); }, 5_000);
     return () => window.clearInterval(timer);
   }, [connection, loadConnection]);
 
@@ -114,8 +118,8 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
 
   const connected = connection?.status === 'READY' || connection?.status === 'CONNECTED';
   const hasConnection = Boolean(connection?.phone_number || connection?.session_id || (connection && connection.status !== 'NOT_CONFIGURED'));
-  const phoneDetail = connectionFailed ? 'Falha ao consultar a conexão' : connected ? 'Telefone cadastrado e sessão conectada'
-    : connection?.phone_number && !connection.session_id ? 'Telefone salvo. Inicie o pareamento.' : connectionLabels[connection?.status ?? ''] ?? 'Salve o telefone da empresa';
+  const phoneDetail = connectionError || (connected ? 'Telefone cadastrado e sessão conectada'
+    : connection?.phone_number && !connection.session_id ? 'Telefone salvo. Inicie o pareamento.' : connectionLabels[connection?.status ?? ''] ?? 'Salve o telefone da empresa');
   const pendingInvites = members?.some(member => member.invite_pending);
   const activeMember = members?.some(member => member.is_active);
   const originPhone = connection?.phone_number?.replace(/\D/g, '');
@@ -126,8 +130,8 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
     {status && <p role="status" className="rounded-lg bg-teal-50 p-3 text-teal-900">{status}</p>}
     {platformAdmin && <Integrations refreshConnection={loadConnection} />}
     <section className={settingsGrid}>
-      <SettingsCard title="WhatsApp" state={connectionFailed ? 'warning' : !connection ? 'loading' : connected && connection.phone_number ? 'ready' : hasConnection ? 'warning' : 'missing'} detail={phoneDetail} action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
-        <p>{connection?.phone_number && !connection.session_id ? phoneDetail : connectionLabels[connection?.status ?? ''] ?? 'Consultando…'}</p>
+      <SettingsCard title="WhatsApp" state={connectionError ? 'warning' : !connection ? 'loading' : connected && connection.phone_number ? 'ready' : hasConnection ? 'warning' : 'missing'} detail={phoneDetail} action={<Button label="Salvar telefone" type="submit" form="settings-phone" variant="primary" isDisabled={busy || !phone.trim()} />}>
+        <p aria-live="polite">{connectionError || (connection?.phone_number && !connection.session_id ? phoneDetail : connectionLabels[connection?.status ?? ''] ?? 'Consultando…')}</p>
         <form id="settings-phone" onSubmit={event => {
           event.preventDefault();
           void run(async () => {
@@ -146,7 +150,7 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
             await api('/whatsapp/connection/pair', { method: 'POST' });
             await loadConnection();
           }, 'Sessão iniciada. Aguarde o QR Code.')} />}
-        <Button label="Atualizar conexão" isDisabled={busy} onClick={() => void run(loadConnection, 'Status atualizado.')} />
+        <Button label="Atualizar conexão" isDisabled={busy} onClick={() => void loadConnection()} />
       </SettingsCard>
       <SettingsCard title="Operadores" state={membersFailed ? 'warning' : !members ? 'loading' : pendingInvites ? 'warning' : activeMember ? 'ready' : 'missing'} detail={membersFailed ? 'Falha ao consultar os operadores' : pendingInvites ? 'Há convites pendentes' : activeMember ? 'Há operadores ativos' : 'Convide ou ative um operador'} action={<Button type="submit" form="settings-operator" label="Enviar convite" variant="primary" isDisabled={busy} />}>
         <ul className="grid gap-2">{(members ?? []).map(member => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={member.id}>

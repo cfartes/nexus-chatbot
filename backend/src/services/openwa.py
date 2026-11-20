@@ -61,8 +61,10 @@ class OpenWAClient:
             async with self._requests:
                 payload = await to_thread(self._read, f"/sessions/{session_id}")
             return OpenWASession.model_validate(payload).status.upper(), account_phone(payload)
+        except HTTPError as error:
+            raise OpenWAUnavailable(f"Consulta da sessão recusada pelo OpenWA (HTTP {error.code}).") from None
         except (URLError, OSError, ValueError):
-            raise OpenWAUnavailable from None
+            raise OpenWAUnavailable("O OpenWA não retornou um status de sessão válido.") from None
 
     def _write(self, path: str, payload: object) -> object:
         result = request_json(self._base_url + path, {"X-API-Key": self._api_key.get_secret_value()}, payload)
@@ -117,25 +119,29 @@ class OpenWAClient:
         path = f"/sessions/{session_id}/webhooks"
         try:
             for offset in range(0, 1000, 100):
-                hooks = await to_thread(self._read, f"{path}?limit=100&offset={offset}")
+                query = "?limit=100" if offset == 0 else f"?limit=100&offset={offset}"
+                payload = await to_thread(self._read, path + query)
+                hooks = payload.get("webhooks") if isinstance(payload, dict) else payload
                 if not isinstance(hooks, list):
-                    raise ValueError("Resposta inválida ao listar webhooks")
+                    raise OpenWAUnavailable("O OpenWA retornou uma lista de webhooks em formato inesperado.")
                 matches = [hook for hook in hooks if isinstance(hook, dict) and hook.get("url") == url]
                 if any(hook.get("active") is True and isinstance(hook.get("events"), list)
                        and "message.received" in hook["events"] for hook in matches):
                     return
                 if matches:
-                    raise ValueError("Webhook existente inativo ou sem o evento de recebimento")
+                    raise OpenWAUnavailable("O webhook está inativo ou não inclui o evento de novas mensagens.")
                 if len(hooks) < 100:
                     result = await to_thread(request_json, self._base_url + path,
                         {"X-API-Key": self._api_key.get_secret_value()},
                         {"url": url, "events": ["message.received"], "secret": secret.get_secret_value()})
                     if isinstance(result, dict) and result.get("success") is False:
-                        raise ValueError("Cadastro do webhook recusado")
+                        raise OpenWAUnavailable("O OpenWA recusou o cadastro do webhook de mensagens.")
                     return
+        except HTTPError as error:
+            raise OpenWAUnavailable(f"O OpenWA recusou a sincronização do webhook (HTTP {error.code}).") from None
         except (OSError, ValueError):
-            raise OpenWAUnavailable from None
-        raise OpenWAUnavailable
+            raise OpenWAUnavailable("Falha ao consultar ou cadastrar o webhook no OpenWA.") from None
+        raise OpenWAUnavailable("A listagem de webhooks do OpenWA não pôde ser concluída.")
 
     async def send_text(self, session_id: UUID, chat_id: str, content: str) -> WhatsAppDispatch:
         try:

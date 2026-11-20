@@ -7,6 +7,7 @@ class WhatsAppConnection(BaseModel):
     session_id: UUID | None = None
     status: str
     phone_number: str | None = None
+    error: str | None = None
 
 
 class WhatsAppQR(BaseModel):

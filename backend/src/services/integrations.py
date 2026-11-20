@@ -65,6 +65,7 @@ class IntegrationService:
             resend_recipient=saved.recipient if saved.recipient is not None else self._settings.resend_to or "",
             resend_has_key=bool(saved.resend_key or self._settings.resend_api_key), openwa_url=endpoint,
             openwa_webhook_status=local.openwa_webhook_status if webhook_configured else "not_configured",
+            openwa_webhook_error=local.openwa_webhook_error if webhook_configured else None,
             openwa_has_key=has_openwa_key)
 
     def webhook_url(self, tenant_id: UUID) -> str | None:
@@ -120,7 +121,8 @@ class IntegrationService:
             raise ValueError("Este endereço OpenWA ainda não foi autorizado na implantação")
         if config.api_key:
             await self._repository.save(shared_id, {"openwa_url": endpoint, "openwa_key": self._encrypt(config.api_key),
-                                                  "openwa_webhook_status": "pending"}, reset_openwa_verification=True)
+                                                  "openwa_webhook_status": "pending", "openwa_webhook_error": None},
+                                        reset_openwa_verification=True)
         elif endpoint != current_url or not (saved.openwa_key or self._settings.openwa_api_key):
             raise ValueError("Informe a chave do servidor OpenWA")
         return await self.view(tenant_id)

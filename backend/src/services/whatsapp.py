@@ -32,7 +32,11 @@ class WhatsAppService:
         if tenant is None or tenant.openwa_session_id is None:
             return WhatsAppConnection(status="NOT_CONFIGURED", phone_number=tenant.phone_number if tenant else None)
         client = await self._integrations.openwa(tenant_id)
-        status, detected_phone = await client.session_identity(tenant.openwa_session_id) if client else ("NOT_CONFIGURED", None)
+        try:
+            status, detected_phone = await client.session_identity(tenant.openwa_session_id) if client else ("NOT_CONFIGURED", None)
+        except OpenWAUnavailable as error:
+            return WhatsAppConnection(status="UNAVAILABLE", session_id=tenant.openwa_session_id,
+                                      phone_number=tenant.phone_number, error=str(error) or "Falha ao consultar o OpenWA.")
         if status in {"READY", "CONNECTED"} and tenant.phone_number:
             if detected_phone and detected_phone != tenant.phone_number:
                 status = "WRONG_NUMBER"

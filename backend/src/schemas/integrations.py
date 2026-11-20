@@ -38,3 +38,4 @@ class IntegrationsView(BaseModel):
     openwa_url: str | None
     openwa_webhook_status: WebhookStatus
     openwa_has_key: bool
+    openwa_webhook_error: str | None = None

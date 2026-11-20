@@ -47,6 +47,7 @@ class Worker:
             if not client:
                 return
             status = "pending"
+            detail = None
             if tenant and tenant.openwa_session_id and tenant.phone_number:
                 try:
                     session_status, phone = await client.session_identity(tenant.openwa_session_id)
@@ -57,10 +58,15 @@ class Worker:
                         status = "active"
                     elif session_status in {"READY", "CONNECTED"} and phone:
                         status = "error"
-                except OpenWAUnavailable:
+                        detail = "O telefone conectado no OpenWA difere do telefone salvo."
+                    elif session_status in {"READY", "CONNECTED"}:
+                        detail = "Sessão conectada. O OpenWA ainda não informou o telefone para verificação."
+                except OpenWAUnavailable as error:
                     status = "error"
-            if (await self._repository.get(tenant_id)).openwa_webhook_status != status:
-                await self._repository.save(tenant_id, {"openwa_webhook_status": status})
+                    detail = str(error) or "Falha na consulta ao OpenWA."
+            saved = await self._repository.get(tenant_id)
+            if (saved.openwa_webhook_status, saved.openwa_webhook_error) != (status, detail):
+                await self._repository.save(tenant_id, {"openwa_webhook_status": status, "openwa_webhook_error": detail})
 
     async def run_once(self) -> bool:
         resend = await self._integrations.resend(self._tenant_id)

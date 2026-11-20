@@ -23,6 +23,7 @@ class StoredIntegrations(BaseModel):
     openwa_key: str | None = None
     openwa_url: str | None = None
     openwa_webhook_status: WebhookStatus = "pending"
+    openwa_webhook_error: str | None = None
 
 
 class IntegrationRepository:
