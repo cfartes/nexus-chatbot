@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from json import dumps
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -26,6 +26,7 @@ class StoredIntegrations(BaseModel):
     openwa_url: str | None = None
     openwa_webhook_status: WebhookStatus = "pending"
     openwa_webhook_error: str | None = None
+    openwa_cooldowns: dict[str, float] = Field(default_factory=dict)
 
 
 class IntegrationRepository:
@@ -58,3 +59,16 @@ class IntegrationRepository:
                 VALUES (:tenant_id, CAST(:config AS jsonb))
                 ON CONFLICT (tenant_id) DO UPDATE SET config = integrations.config || excluded.config
             """), {"tenant_id": tenant_id, "config": dumps(changes)})
+
+    async def defer_openwa(self, tenant_id: UUID, endpoint: str, until: float) -> None:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            await connection.execute(text("""
+                INSERT INTO nexus_atende.integrations AS integrations (tenant_id, config)
+                VALUES (:tenant_id, jsonb_build_object('openwa_cooldowns', jsonb_build_object(
+                    CAST(:endpoint AS text), CAST(:until AS double precision))))
+                ON CONFLICT (tenant_id) DO UPDATE SET config = jsonb_set(
+                    integrations.config, '{openwa_cooldowns}',
+                    coalesce(integrations.config->'openwa_cooldowns', '{}'::jsonb) ||
+                    jsonb_build_object(CAST(:endpoint AS text), greatest(CAST(:until AS double precision),
+                        CAST(integrations.config->'openwa_cooldowns'->>CAST(:endpoint AS text) AS double precision))))
+            """), {"tenant_id": tenant_id, "endpoint": endpoint, "until": until})

@@ -72,7 +72,7 @@ O teste retorna HTTP 424 quando a API do Nexus Atende detecta uma falha no Resen
 
 O cartão WhatsApp exibe o ID da sessão salvo mesmo quando a consulta ao OpenWA falha. O cartão OpenWA indica separadamente o estado do webhook de recebimento e o motivo da falha de sincronização, quando disponível.
 
-Se o OpenWA limitar as chamadas com HTTP 429, o processo que recebeu a resposta respeita o intervalo do gateway para retomar as consultas e os envios pendentes. O painel indica a espera e mantém o vínculo da sessão.
+Se o OpenWA limitar as chamadas com HTTP 429, API e worker compartilham na base o prazo informado pelo gateway. O painel indica a espera e mantém o vínculo da sessão.
 
 Quando o intervalo termina, o worker dá prioridade à fila de envio. Uma resposta recusada com 429 fica pendente até a próxima tentativa, e as respostas seguintes da mesma conversa aguardam sua vez.
 

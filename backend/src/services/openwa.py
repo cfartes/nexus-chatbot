@@ -1,6 +1,7 @@
 from asyncio import Semaphore, to_thread
 from base64 import b64decode
 from binascii import Error as Base64Error
+from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
 import logging
 from math import ceil
@@ -11,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from uuid import UUID
 
 from pydantic import SecretStr
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.schemas.whatsapp import OpenWAQR, OpenWASession
 from src.schemas.work import WhatsAppDispatch
@@ -25,8 +27,9 @@ class OpenWAUnavailable(Exception):
 
 
 class OpenWARateLimited(OpenWAUnavailable):
-    def __init__(self, retry_after: int) -> None:
+    def __init__(self, retry_after: int, *, deadline: float | None = None) -> None:
         self.retry_after = retry_after
+        self.deadline = deadline
         super().__init__("O OpenWA limitou temporariamente as chamadas (HTTP 429). A consulta será retomada automaticamente.")
 
 
@@ -67,9 +70,12 @@ class OpenWAClient:
     _cooldown: dict[str, float] = {}
     _cooldown_lock = Lock()
 
-    def __init__(self, base_url: str, api_key: SecretStr) -> None:
+    def __init__(self, base_url: str, api_key: SecretStr, *, retry_until: float = 0,
+                 defer: Callable[[float], Awaitable[None]] | None = None) -> None:
         self._base_url = base_url
         self._api_key = api_key
+        self._retry_until = retry_until
+        self._defer = defer
         self._requests = Semaphore(4)
 
     def retry_after(self) -> int:
@@ -77,8 +83,21 @@ class OpenWAClient:
             remaining = self._cooldown.get(self._base_url, 0) - monotonic()
             if remaining <= 0:
                 self._cooldown.pop(self._base_url, None)
-                return 0
-            return ceil(remaining)
+            return max(0, ceil(max(remaining, self._retry_until - time())))
+
+    async def _call(self, operation: Callable[..., object], *args: object) -> object:
+        delay = self.retry_after()
+        if delay:
+            raise OpenWARateLimited(delay)
+        try:
+            return await to_thread(operation, *args)
+        except OpenWARateLimited as error:
+            if self._defer and error.deadline is not None:
+                try:
+                    await self._defer(error.deadline)
+                except SQLAlchemyError as storage_error:
+                    logger.warning("Could not share OpenWA cooldown (%s)", type(storage_error).__name__)
+            raise
 
     def _request(self, path: str, payload: object = None) -> object:
         delay = self.retry_after()
@@ -95,7 +114,7 @@ class OpenWAClient:
             with self._cooldown_lock:
                 deadline = monotonic() + delay
                 self._cooldown[self._base_url] = max(deadline, self._cooldown.get(self._base_url, 0))
-            raise OpenWARateLimited(delay) from None
+            raise OpenWARateLimited(delay, deadline=time() + delay) from None
 
     def _read(self, path: str) -> object:
         decoded = self._request(path)
@@ -108,7 +127,7 @@ class OpenWAClient:
     async def session_identity(self, session_id: UUID) -> tuple[str, str | None]:
         try:
             async with self._requests:
-                payload = await to_thread(self._read, f"/sessions/{session_id}")
+                payload = await self._call(self._read, f"/sessions/{session_id}")
             return OpenWASession.model_validate(payload).status.upper(), account_phone(payload)
         except HTTPError as error:
             raise OpenWAUnavailable(f"Consulta da sessão recusada pelo OpenWA (HTTP {error.code}).") from None
@@ -124,7 +143,7 @@ class OpenWAClient:
     async def ensure_session(self, name: str) -> UUID:
         try:
             for offset in range(0, 1000, 100):
-                payload = await to_thread(self._read, f"/sessions?limit=100&offset={offset}")
+                payload = await self._call(self._read, f"/sessions?limit=100&offset={offset}")
                 sessions = payload.get("sessions") if isinstance(payload, dict) else payload
                 if not isinstance(sessions, list):
                     raise ValueError("Resposta inválida ao listar sessões")
@@ -134,7 +153,7 @@ class OpenWAClient:
                 if matches:
                     return UUID(str(matches[0].get("id", "")))
                 if len(sessions) < 100:
-                    created = await to_thread(self._write, "/sessions", {"name": name})
+                    created = await self._call(self._write, "/sessions", {"name": name})
                     return UUID(str(created.get("id", "")) if isinstance(created, dict) else "")
         except HTTPError as error:
             raise OpenWAUnavailable(f"OpenWA recusou a preparação da sessão (HTTP {error.code}). Confira a chave e suas permissões.") from None
@@ -144,7 +163,7 @@ class OpenWAClient:
 
     async def start_session(self, session_id: UUID) -> None:
         try:
-            await to_thread(self._write, f"/sessions/{session_id}/start", {})
+            await self._call(self._write, f"/sessions/{session_id}/start", {})
         except HTTPError as error:
             raise OpenWAUnavailable(f"OpenWA recusou o início da sessão (HTTP {error.code}). Confira a chave e suas permissões.") from None
         except (OSError, ValueError):
@@ -153,7 +172,7 @@ class OpenWAClient:
     async def qr_code(self, session_id: UUID) -> str | None:
         try:
             async with self._requests:
-                payload = await to_thread(self._read, f"/sessions/{session_id}/qr")
+                payload = await self._call(self._read, f"/sessions/{session_id}/qr")
             value = OpenWAQR.model_validate(payload).qrCode
             if not value:
                 return None
@@ -169,7 +188,7 @@ class OpenWAClient:
         try:
             for offset in range(0, 1000, 100):
                 query = "?limit=100" if offset == 0 else f"?limit=100&offset={offset}"
-                payload = await to_thread(self._read, path + query)
+                payload = await self._call(self._read, path + query)
                 hooks = payload.get("webhooks") if isinstance(payload, dict) else payload
                 if not isinstance(hooks, list):
                     raise OpenWAUnavailable("O OpenWA retornou uma lista de webhooks em formato inesperado.")
@@ -180,7 +199,7 @@ class OpenWAClient:
                 if matches:
                     raise OpenWAUnavailable("O webhook está inativo ou não inclui o evento de novas mensagens.")
                 if len(hooks) < 100:
-                    result = await to_thread(self._request, path,
+                    result = await self._call(self._request, path,
                         {"url": url, "events": ["message.received"], "secret": secret.get_secret_value()})
                     if isinstance(result, dict) and result.get("success") is False:
                         raise OpenWAUnavailable("O OpenWA recusou o cadastro do webhook de mensagens.")
@@ -193,7 +212,7 @@ class OpenWAClient:
 
     async def send_text(self, session_id: UUID, chat_id: str, content: str) -> WhatsAppDispatch:
         try:
-            payload = await to_thread(self._request, f"/sessions/{session_id}/messages/send-text",
+            payload = await self._call(self._request, f"/sessions/{session_id}/messages/send-text",
                 {"chatId": chat_id, "text": content, "linkPreview": False})
         except OpenWARateLimited as error:
             logger.warning("OpenWA deferred WhatsApp delivery for %s seconds (HTTP 429)", error.retry_after)

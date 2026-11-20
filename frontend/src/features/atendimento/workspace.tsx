@@ -66,6 +66,7 @@ export function Workspace() {
   const [revision, setRevision] = useState(0);
   const [view, setView] = useState<'inbox' | 'settings' | 'password' | 'clients'>('inbox');
   const [error, setError] = useState('');
+  const [queueError, setQueueError] = useState('');
   const [connected, setConnected] = useState(false);
   const refresh = () => setRevision(value => value + 1);
 
@@ -92,10 +93,12 @@ export function Workspace() {
   useEffect(() => {
     if (!operator) return;
     const controller = new AbortController();
-    api<Conversation[]>(`/conversations?queue=${queue}&offset=${offset}`, { signal: controller.signal }).then(setRows).catch(failure => {
+    api<Conversation[]>(`/conversations?queue=${queue}&offset=${offset}`, { signal: controller.signal }).then(items => {
+      setRows(items); setQueueError('');
+    }).catch(failure => {
       if (controller.signal.aborted) return;
       if (failure instanceof ApiError && failure.status === 401) setOperator(null);
-      else setError(errorMessage(failure));
+      else setQueueError(`Fila de conversas · ${errorMessage(failure)}`);
     });
     return () => controller.abort();
   }, [operator, queue, offset, revision]);
@@ -105,7 +108,7 @@ export function Workspace() {
     catch (failure) {
       if (!(failure instanceof ApiError && failure.status === 401)) { setError(errorMessage(failure)); return; }
     }
-    setOperator(null); setRows([]); setSelected(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setConnected(false);
+    setOperator(null); setRows([]); setSelected(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setConnected(false); setQueueError('');
   }
 
   if (operator === undefined) return <main className="p-8" aria-busy>Carregando sessão…</main>;
@@ -125,6 +128,7 @@ export function Workspace() {
     {error && <p role="alert" className="bg-red-50 px-5 py-2 text-red-800">{error}</p>}
     {view === 'password' ? <PasswordSettings /> : view === 'clients' && operator.platform_admin ? <ClientSettings platformTenant={operator.tenant_id} /> : view === 'settings' ? <Settings platformAdmin={operator.platform_admin} /> : <section className="mx-auto grid max-w-screen-2xl gap-4 p-4 md:min-h-[calc(100dvh-3.75rem)] md:grid-cols-[20rem_minmax(0,1fr)]" aria-label="Caixa de entrada">
       <aside className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        {queueError && <p role="alert" className="bg-red-50 p-4 text-sm text-red-800">{queueError}</p>}
         <header className="grid gap-2 border-b border-slate-200 p-4"><h2 className="text-lg font-semibold">Conversas</h2>
           <p className="text-xs text-slate-600">{connected ? 'Atualizações ao vivo' : 'Atualização periódica'}</p>
           <label className="grid gap-1 text-sm">Fila<select className={fieldStyle} value={queue} onChange={event => {

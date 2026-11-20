@@ -420,11 +420,13 @@ async def check() -> None:
             retry_headers["Retry-After"] = "90"
             limited = HTTPError(f"{endpoint}/sessions/{SESSION}", 429, "Rate limited", retry_headers, None)
             with (patch("src.services.openwa.monotonic", return_value=1000) as clock,
+                  patch("src.services.openwa.time", side_effect=lambda: clock.return_value),
                   patch("src.services.openwa.request_json", side_effect=[limited, ready_session, {"data": [active_hook]}]) as gateway):
                 await worker.sync_webhook()
                 status, gateway_state = await call("integrations", "GET", "")
                 assert status == 200 and json.loads(gateway_state)["openwa_webhook_status"] == "rate_limited"
-                status, deferred = await call("whatsapp", "GET", "connection")
+                with patch("src.services.openwa.OpenWAClient._cooldown", {}):
+                    status, deferred = await call("whatsapp", "GET", "connection")
                 deferred_session = json.loads(deferred)
                 assert status == 200 and deferred_session["status"] == "RATE_LIMITED"
                 assert deferred_session["session_id"] == str(SESSION) and deferred_session["retry_after"] == 90
@@ -447,6 +449,7 @@ async def check() -> None:
                     await enqueue(connection, TENANT, conversation, "whatsapp", outgoing_id)
             limited_send = HTTPError(f"{endpoint}/sessions/{SESSION}/messages/send-text", 429, "Rate limited", retry_headers, None)
             with (patch("src.services.openwa.monotonic", return_value=1200) as clock,
+                  patch("src.services.openwa.time", side_effect=lambda: clock.return_value),
                   patch("src.services.openwa.request_json", side_effect=[
                       limited_send, {"data": {"messageId": str(uuid4())}}, {"data": {"messageId": str(uuid4())}},
                   ]) as delivery):

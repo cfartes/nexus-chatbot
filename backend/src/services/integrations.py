@@ -1,4 +1,5 @@
 from urllib.parse import urlsplit
+from functools import partial
 from hmac import digest
 from uuid import UUID
 
@@ -182,7 +183,8 @@ class IntegrationService:
         return ResendClient(key, sender, recipient or "") if key and sender else None
 
     async def openwa(self, tenant_id: UUID) -> OpenWAClient | None:
-        saved = await self._repository.get(self._shared_tenant(tenant_id))
+        shared_id = self._shared_tenant(tenant_id)
+        saved = await self._repository.get(shared_id)
         endpoint = saved.openwa_url or self._openwa_url
         if endpoint is None or endpoint not in self._openwa_allowed:
             return None
@@ -190,7 +192,8 @@ class IntegrationService:
             key = self._decrypt(saved.openwa_key) or (self._settings.openwa_api_key if endpoint == self._openwa_url else None)
         except IntegrationUnavailable:
             return None
-        return OpenWAClient(endpoint, key) if key else None
+        return OpenWAClient(endpoint, key, retry_until=saved.openwa_cooldowns.get(endpoint, 0),
+                            defer=partial(self._repository.defer_openwa, shared_id, endpoint)) if key else None
 
 
 def tenant_webhook_secret(root_tenant: UUID, tenant_id: UUID, secret: SecretStr) -> SecretStr:
