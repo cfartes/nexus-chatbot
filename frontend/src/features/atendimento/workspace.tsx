@@ -20,6 +20,7 @@ const queues: { id: Queue; label: string }[] = [
 ];
 export const fieldStyle = 'w-full rounded-lg border border-current/20 bg-transparent px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-2';
 const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const manualUrl = '/manual-do-cliente.pdf';
 
 function Login({ onLogin }: { onLogin: (operator: Operator) => void }) {
   const [error, setError] = useState('');
@@ -56,6 +57,9 @@ function Login({ onLogin }: { onLogin: (operator: Operator) => void }) {
       <label className="grid gap-2 text-sm font-medium">Senha<input required type="password" name="password" autoComplete="current-password" className={fieldStyle} /></label>
       {error && <p role="alert" className="text-red-700">{error}</p>}
       <Button type="submit" label="Entrar" variant="primary" isLoading={busy} />
+      <a href={manualUrl} target="_blank" rel="noopener" className="text-center text-sm font-medium text-nexus-petroleo underline">
+        Manual do cliente (PDF)
+      </a>
     </form>
   </main>;
 }
@@ -173,6 +177,7 @@ export function Workspace() {
         </>}
         {operator.platform_admin && <button className="underline" onClick={() => setView('clients')}>Clientes</button>}
         <button className="underline" onClick={() => setView('password')}>Alterar senha</button>
+        <a href={manualUrl} target="_blank" rel="noopener" className="underline">Manual do cliente (PDF)</a>
         <TransferNotices key={operator.id} revision={revision} openConversation={openTransfer}
           activeConversation={view === 'inbox' && active?.assigned_user_id === operator.id ? active.id : undefined} />
         <p>{operator.name}</p><button className="underline" onClick={logout}>Sair</button>

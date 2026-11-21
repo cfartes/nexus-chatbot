@@ -92,7 +92,7 @@ Administradores e atendentes responsáveis podem transferir conversas atribuída
 
 Use **Funções** para cadastrar o nome do perfil e vinculá-lo a Comercial, Financeiro, Suporte ou SAC. Em **Colaboradores**, inclua ou edite atendentes em uma janela modal e selecione a função no campo **Perfil**. Quando o cliente pede atendimento humano, o bot mostra um menu numerado e encaminha à fila do setor escolhido.
 
-Os cards em **Atendimento** mostram as contagens completas das filas e funcionam como filtros. O administrador também vê **Todos atribuídos** e **Encerrados**. O [manual do cliente](MANUAL_DO_CLIENTE.pdf) cobre a operação do administrador da empresa e do colaborador.
+Os cards em **Atendimento** mostram as contagens completas das filas e funcionam como filtros. O administrador também vê **Todos atribuídos** e **Encerrados**. O [manual do cliente](frontend/public/manual-do-cliente.pdf) cobre a operação do administrador da empresa e do colaborador e abre em uma nova aba pelo login ou pelo menu do painel.
 
 Após uma resposta enviada pela IA ou pelo atendente, o worker aguarda 30 minutos de inatividade do contato antes de avisar pelo WhatsApp. Se o OpenWA aceitar o aviso e o contato não responder em 5 minutos, o atendimento é encerrado e o histórico é preservado. Uma mensagem do contato cancela o prazo, inclusive quando o evento recebido sinaliza um anexo. A fila humana em espera fica fora da rotina.
 
