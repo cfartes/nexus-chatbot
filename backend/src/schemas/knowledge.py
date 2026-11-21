@@ -23,6 +23,11 @@ class KnowledgeSource(BaseModel):
 
 class WelcomeMessage(BaseModel):
     message: str = Field(max_length=500, pattern=r"^[^\x00]*$")
+    assistant_name: str | None = Field(default=None, max_length=80, pattern=r"^[^\x00-\x1f\x7f]*$")
+
+
+class AssistantProfile(WelcomeMessage):
+    company_name: str
 
 
 class PreviewRequest(BaseModel):
@@ -66,6 +71,8 @@ class BotContext(BaseModel):
     origin_name: str | None = None
     local_hour: int = 0
     awaiting_department: bool = False
+    company_name: str = ""
+    assistant_name: str = ""
 
 
 class OpeningUpdate(BaseModel):

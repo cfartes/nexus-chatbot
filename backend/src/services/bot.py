@@ -10,8 +10,8 @@ from src.schemas.operators import Department
 from src.schemas.work import WorkItem
 from src.services.integrations import IntegrationService
 
-FALLBACK = "Vou encaminhar sua conversa para a equipe da Nexus. Um atendente continuará o atendimento aqui."
-TECHNICAL = "Estou com uma dificuldade técnica no momento. Vou chamar a equipe da Nexus para continuar o atendimento."
+FALLBACK = "Vou encaminhar sua conversa para nossa equipe. Um atendente continuará o atendimento aqui."
+TECHNICAL = "Estou com uma dificuldade técnica no momento. Vou chamar nossa equipe para continuar o atendimento."
 ASK_NAME = "Como posso chamar você?"
 ASK_SUBJECT = "Como posso ajudar?"
 DEPARTMENTS: tuple[tuple[Department, str], ...] = (
@@ -46,7 +46,7 @@ class BotService:
                 if context.origin_name is not None:
                     context.origin_slug = marker[1].lower()
             if context.origin_slug is None:
-                prefix = context.welcome_message or "Olá!"
+                prefix = _welcome(context) or "Olá!"
                 if context.name:
                     greeting = "Bom dia" if 5 <= context.local_hour < 12 else "Boa tarde" if 12 <= context.local_hour < 18 else "Boa noite"
                     prefix += f"\n\n{greeting}, {context.name}!"
@@ -98,10 +98,13 @@ class BotService:
         await self._repository.resolve(tenant_id, work, answer, _prefixed(prefix, fallback), summary, opening)
 
     async def preview(self, tenant_id: UUID, question: str) -> PreviewResult:
-        welcome_message = await self._knowledge.welcome(tenant_id)
-        result, _ = await self._answer(tenant_id, BotContext(
-            question=question, welcome_message=welcome_message, name=None, previous_summary=None, recent=[], previous=[],
-        ))
+        profile = await self._knowledge.welcome(tenant_id)
+        context = BotContext(
+            question=question, welcome_message=profile.message, name=None, previous_summary=None, recent=[], previous=[],
+            company_name=profile.company_name, assistant_name=profile.assistant_name or "",
+        )
+        context.welcome_message = _welcome(context)
+        result, _ = await self._answer(tenant_id, context)
         return result
 
     async def _answer(self, tenant_id: UUID, context: BotContext) -> tuple[PreviewResult, str | None]:
@@ -193,3 +196,10 @@ def _customer_name(value: str) -> str | None:
 
 def _prefixed(prefix: str, message: str) -> str:
     return (f"{prefix}\n\n{message}" if prefix else message)[:4096]
+
+
+def _welcome(context: BotContext) -> str:
+    if not context.assistant_name:
+        return context.welcome_message
+    introduction = f"Sou {context.assistant_name}, assistente virtual da empresa {context.company_name}."
+    return _prefixed(context.welcome_message or "Olá!", introduction)

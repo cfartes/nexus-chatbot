@@ -10,6 +10,7 @@ import { Integrations } from './integrations';
 import { SettingsCard, settingsGrid } from './settings-card';
 
 type Source = { source: string; chunks: number };
+type AssistantSettings = { message: string; assistant_name?: string | null };
 type Origin = { slug: string; name: string };
 type Connection = { status: string; phone_number: string | null; session_id: string | null; error?: string | null; retry_after?: number | null };
 type Preview = { status: 'answered' | 'clarify' | 'handoff' | 'unavailable'; message: string; sources: string[];
@@ -50,6 +51,8 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
   const [importKind, setImportKind] = useState('texto');
   const [welcome, setWelcome] = useState<string>();
   const [savedWelcome, setSavedWelcome] = useState<string>();
+  const [assistantName, setAssistantName] = useState('');
+  const [savedAssistantName, setSavedAssistantName] = useState('');
   const [question, setQuestion] = useState('');
   const [preview, setPreview] = useState<Preview>();
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -80,8 +83,9 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
       setAlertEmail(email); setSavedAlertEmail(email);
     }).catch(failure => setAlertError(errorMessage(failure)));
     void api<Origin[]>('/knowledge/origins').then(setOrigins).catch(failure => { setOriginsFailed(true); setError(errorMessage(failure)); });
-    void api<{ message: string }>('/knowledge/welcome').then(value => {
+    void api<AssistantSettings>('/knowledge/welcome').then(value => {
       setWelcome(value.message); setSavedWelcome(value.message);
+      setAssistantName(value.assistant_name ?? ''); setSavedAssistantName(value.assistant_name ?? '');
     }).catch(failure => { setWelcomeFailed(true); setError(errorMessage(failure)); });
     void loadConnection();
   }, [loadConnection, loadSources]);
@@ -233,16 +237,21 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
       </ul>}
     </SettingsCard>
 
-    <SettingsCard title="Boas-vindas" state={welcomeFailed ? 'warning' : savedWelcome === undefined ? 'loading' : savedWelcome ? 'ready' : 'missing'} detail={welcomeFailed ? 'Falha ao consultar a mensagem padrão' : savedWelcome ? 'Mensagem padrão salva' : 'Sem mensagem padrão'} action={<Button type="submit" form="settings-welcome" label="Salvar boas-vindas" variant="primary" isDisabled={busy || welcome === undefined} />}>
+    <SettingsCard title="Assistente e boas-vindas" state={welcomeFailed ? 'warning' : savedWelcome === undefined ? 'loading' : savedWelcome || savedAssistantName ? 'ready' : 'missing'} detail={welcomeFailed ? 'Falha ao consultar o assistente' : savedWelcome || savedAssistantName ? 'Configuração salva' : 'Usando as boas-vindas padrão'} action={<Button type="submit" form="settings-welcome" label="Salvar assistente" variant="primary" isDisabled={busy || welcome === undefined} />}>
       <form id="settings-welcome" className="grid gap-3" onSubmit={event => {
         event.preventDefault();
         if (welcome === undefined) return;
         void run(async () => {
-          const saved = await api<{ message: string }>('/knowledge/welcome', { method: 'PUT', body: JSON.stringify({ message: welcome }) });
+          const saved = await api<AssistantSettings>('/knowledge/welcome', {
+            method: 'PUT', body: JSON.stringify({ message: welcome, assistant_name: assistantName.trim() }),
+          });
           setWelcome(saved.message);
           setSavedWelcome(saved.message);
-        }, 'Mensagem de boas-vindas salva.');
+          setAssistantName(saved.assistant_name ?? '');
+          setSavedAssistantName(saved.assistant_name ?? '');
+        }, 'Configuração do assistente salva.');
       }}>
+        <TextInput label="Nome do assistente" description="Opcional, até 80 caracteres. O assistente se apresenta com este nome no início do contato direto." value={assistantName} onChange={setAssistantName} isDisabled={busy || welcome === undefined} />
         <TextArea label="Mensagem padrão" description="Aparece no início de atendimentos de contato direto. Quando o campo está vazio, o bot usa “Olá!”." value={welcome ?? ''} onChange={setWelcome} maxLength={500} isDisabled={busy || welcome === undefined} />
       </form>
     </SettingsCard>

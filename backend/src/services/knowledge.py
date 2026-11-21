@@ -19,9 +19,7 @@ class KnowledgeService:
         self._imports = Semaphore(2)
 
     async def welcome(self, tenant_id: UUID, content: WelcomeMessage | None = None) -> WelcomeMessage:
-        return WelcomeMessage(message=await self._repository.welcome(
-            tenant_id, content.message.strip() if content is not None else None,
-        ))
+        return await self._repository.welcome(tenant_id, content)
 
     async def origins(self, tenant_id: UUID) -> list[ContactOrigin]:
         return await self._repository.origins(tenant_id)

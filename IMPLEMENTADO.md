@@ -187,3 +187,5 @@ Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.d
 - Os e-mails de encaminhamento humano e transferência incluem o nome do contato, o horário de Brasília e o link da conversa com a empresa pré-selecionada.
 
 - A IA combina busca semântica e textual em português, usa o contexto recente em perguntas curtas, amplia a busca antes do encaminhamento e pode pedir esclarecimento. O teste no painel exibe trechos e o motivo da decisão.
+
+- O administrador pode configurar o nome do assistente em Configurações → Assistente e boas-vindas. A IA usa a identidade da empresa ativa no WhatsApp e no teste do painel.

@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
-from src.schemas.knowledge import ContactOrigin, KnowledgeMatch, KnowledgeSource
+from src.schemas.knowledge import AssistantProfile, ContactOrigin, KnowledgeMatch, KnowledgeSource, WelcomeMessage
 
 
 class KnowledgeRepository:
@@ -32,17 +32,23 @@ class KnowledgeRepository:
             """), {"tenant_id": tenant_id, "slug": slug})
             return str(name) if name is not None else None
 
-    async def welcome(self, tenant_id: UUID, message: str | None = None) -> str:
+    async def welcome(self, tenant_id: UUID, content: WelcomeMessage | None = None) -> AssistantProfile:
         async with tenant_transaction(self._engine, tenant_id) as connection:
-            if message is not None:
-                await connection.execute(text("""
-                    UPDATE nexus_atende.tenants SET welcome_message = :message WHERE id = :tenant_id
-                """), {"tenant_id": tenant_id, "message": message})
-                return message
-            value = await connection.scalar(text("""
-                SELECT welcome_message FROM nexus_atende.tenants WHERE id = :tenant_id
-            """), {"tenant_id": tenant_id})
-            return str(value) if value is not None else ""
+            if content is not None:
+                result = await connection.execute(text("""
+                    UPDATE nexus_atende.tenants
+                    SET welcome_message = :message, assistant_name = coalesce(:assistant_name, assistant_name)
+                    WHERE id = :tenant_id
+                    RETURNING welcome_message AS message, assistant_name, name AS company_name
+                """), {"tenant_id": tenant_id, "message": content.message.strip(),
+                       "assistant_name": None if content.assistant_name is None else content.assistant_name.strip()})
+            else:
+                result = await connection.execute(text("""
+                    SELECT welcome_message AS message, assistant_name, name AS company_name
+                    FROM nexus_atende.tenants WHERE id = :tenant_id
+                """), {"tenant_id": tenant_id})
+            row = result.mappings().one_or_none()
+            return AssistantProfile.model_validate(row) if row is not None else AssistantProfile(message="", company_name="")
 
     async def replace(self, tenant_id: UUID, source: str, chunks: list[tuple[str, list[float]]], embedding_space: str = "") -> str:
         async with tenant_transaction(self._engine, tenant_id) as connection:

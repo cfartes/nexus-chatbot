@@ -129,6 +129,19 @@ async def check() -> None:
                 status, preview = await call("knowledge", "POST", "preview", {"question": "Qual o horário do atendimento humano?"})
             assert status == 200 and json.loads(preview)["status"] == "answered"
 
+            status, identity = await call("knowledge", "PUT", "welcome", {
+                "message": "Bem-vindo à Nexus!", "assistant_name": " Lia ",
+            })
+            assert status == 200 and json.loads(identity)["assistant_name"] == "Lia"
+            await call("knowledge", "PUT", "welcome", {"message": "Bem-vindo à Nexus!"})
+            assert json.loads((await call("knowledge", "GET", "welcome"))[1])["assistant_name"] == "Lia"
+            other_identity = await knowledge_repository.welcome(OTHER)
+            assert other_identity.company_name == "Outra empresa" and other_identity.assistant_name == ""
+            with patch("src.services.openai.request_json", side_effect=[vector, completion]) as ai:
+                status, preview = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
+            assert status == 200 and "Sou Lia, assistente virtual da empresa Nexus." in json.loads(preview)["message"]
+            assert "Empresa: 'Nexus'\nNome do assistente: 'Lia'" in ai.call_args.args[2]["messages"][-1]["content"]
+
             async def receive(message_id: str, content: str, phone: str = "5511888888888", *, has_media: bool = False) -> None:
                 raw = json.dumps({"event": "message.received", "sessionId": SESSION, "data": {
                     "id": message_id, "from": f"{phone}@c.us", "fromMe": False, "body": content, "hasMedia": has_media,
@@ -155,16 +168,22 @@ async def check() -> None:
                         direct, = [args.args[2] for args in resend.call_args_list if "transferida" in args.args[2]["subject"]]
                         assert direct["to"] == ["first@example.test"]
                         assert f"empresa={TENANT}&atendimento={conversation_id}&fila=mine" in direct["text"]
-                        assert whatsapp.call_args.args[2]["text"] == "Bem-vindo à Nexus!\n\nComo posso chamar você?"
+                        assert whatsapp.call_args.args[2]["text"] == (
+                            "Bem-vindo à Nexus!\n\nSou Lia, assistente virtual da empresa Nexus.\n\nComo posso chamar você?"
+                        )
                     elif message_id == "work-name":
                         assert whatsapp.call_count == 1 and ai.call_count == 2 and resend.call_count == 0
                         assert whatsapp.call_args.args[2]["text"] == "Prazer, Ana Souza!\n\nAtendemos em horário comercial."
                         assert "Qual é o expediente?" in str(ai.call_args.args[2])
+                        assert "Empresa: 'Nexus'\nNome do assistente: 'Lia'" in ai.call_args.args[2]["messages"][-1]["content"]
                         continue
                     elif message_id == "work-follow-up":
                         assert whatsapp.call_count == 1 and ai.call_count == 2 and resend.call_count == 0
                         embedded = ai.call_args_list[0].args[2]["input"]
                         assert "E no sábado?" in embedded[0] and "Qual é o expediente?" in embedded[0]
+                        assert (await call("knowledge", "PUT", "welcome", {
+                            "message": "Bem-vindo à Nexus!", "assistant_name": "",
+                        }))[0] == 200
                         continue
                     elif message_id in {"work-human", "work-invalid-category"}:
                         assert whatsapp.call_count == 1 and ai.call_count == 0 and resend.call_count == 0

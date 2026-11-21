@@ -29,6 +29,7 @@ class BotRepository:
             values = {"tenant_id": tenant_id, "id": work.conversation_id, "message_id": work.message_id}
             info = await connection.execute(text("""
                 SELECT messages.content, customers.name, customers.previous_summary, tenants.welcome_message,
+                    tenants.name AS company_name, tenants.assistant_name,
                     conversations.opening_pending, conversations.opening_question, conversations.origin_slug, conversations.awaiting_department,
                     origins.name AS origin_name,
                     extract(hour FROM messages.created_at AT TIME ZONE 'America/Sao_Paulo')::int AS local_hour
@@ -65,7 +66,8 @@ class BotRepository:
                               recent=recent, previous=[] if recent else [entry.line for entry in entries],
                               opening_pending=row.opening_pending, opening_question=row.opening_question,
                               origin_slug=row.origin_slug, origin_name=row.origin_name, local_hour=row.local_hour,
-                              awaiting_department=row.awaiting_department)
+                              awaiting_department=row.awaiting_department, company_name=row.company_name,
+                              assistant_name=row.assistant_name)
 
     async def resolve(self, tenant_id: UUID, work: WorkItem, answer: str | None, fallback: str, summary: str | None,
                       opening: OpeningUpdate | None = None, *, ask_department: bool = False,
