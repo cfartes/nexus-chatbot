@@ -2,15 +2,15 @@
 
 import { Button } from '@astryxdesign/core/Button';
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, errorMessage, departmentLabels, type Department } from './api';
+import { api, errorMessage, departmentLabels, type Department, type OperatorFunction } from './api';
 import { RegistrationDialog, registrationField } from './RegistrationDialog';
-import { SettingsCard } from './settings-card';
 
 type Member = { id: string; name: string; email: string; department: Department; is_active: boolean;
-  invite_pending: boolean; invite_sent: boolean | null; invite_error: string | null };
+  function_id: string | null; invite_pending: boolean; invite_sent: boolean | null; invite_error: string | null };
 
 export function OperatorSettings() {
   const [members, setMembers] = useState<Member[]>();
+  const [functions, setFunctions] = useState<OperatorFunction[]>();
   const [editing, setEditing] = useState<Member | 'new'>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -18,7 +18,10 @@ export function OperatorSettings() {
 
   useEffect(() => {
     const controller = new AbortController();
-    api<Member[]>('/operators', { signal: controller.signal }).then(setMembers).catch(failure => {
+    Promise.all([api<Member[]>('/operators', { signal: controller.signal }),
+      api<OperatorFunction[]>('/operators/functions', { signal: controller.signal })]).then(([people, profiles]) => {
+      setMembers(people); setFunctions(profiles);
+    }).catch(failure => {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     });
     return () => controller.abort();
@@ -48,15 +51,18 @@ export function OperatorSettings() {
     });
   }
 
-  return <SettingsCard title="Atendentes" state={error && !editing ? 'warning' : !members ? 'loading'
-    : members.some(item => item.is_active) ? 'ready' : members.length ? 'warning' : 'missing'}
-    action={<Button label="Novo atendente" variant="primary" isDisabled={busy || !members} onClick={() => { setError(''); setEditing('new'); }} />}>
+  return <section className="mx-auto grid max-w-screen-xl gap-4 p-4" aria-labelledby="operators-title">
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <h2 id="operators-title" className="text-2xl font-semibold">Colaboradores</h2>
+      <Button label="Novo colaborador" variant="primary" isDisabled={busy || !members || !functions?.length} onClick={() => { setError(''); setEditing('new'); }} />
+    </header>
+    {functions?.length === 0 && <p className="text-sm text-slate-600">Cadastre uma função para incluir colaboradores.</p>}
     {status && <p role="status" className="text-sm">{status}</p>}
     {error && !editing && <p role="alert" className="text-sm text-red-800">{error}</p>}
     {members?.length === 0 && <p className="text-sm text-slate-600">Nenhum atendente cadastrado.</p>}
-    <ul className="grid gap-3">{members?.map(item => <li key={item.id} className="grid gap-2 border-b border-slate-200 pb-3">
+    <ul className="grid gap-3">{members?.map(item => <li key={item.id} className="grid gap-2 rounded-2xl border border-slate-200 bg-white p-5">
       <p className="break-all text-sm"><strong>{item.name}</strong><br />{item.email}<br />
-        {departmentLabels[item.department]} · {item.invite_pending ? 'Convite pendente' : item.is_active ? 'Ativo' : 'Desativado'}</p>
+        {functions?.find(profile => profile.id === item.function_id)?.name ?? departmentLabels[item.department]} · {item.invite_pending ? 'Convite pendente' : item.is_active ? 'Ativo' : 'Desativado'}</p>
       <section className="flex flex-wrap gap-2" aria-label={`Ações para ${item.name}`}>
         <Button label="Editar" isDisabled={busy} onClick={() => { setError(''); setEditing(item); }} />
         {item.invite_pending && <Button label="Reenviar convite" isDisabled={busy} onClick={() => void run(async () => {
@@ -72,14 +78,15 @@ export function OperatorSettings() {
         }} />
       </section>
     </li>)}</ul>
-    {editing && <RegistrationDialog title={member ? 'Editar atendente' : 'Novo atendente'}
+    {editing && <RegistrationDialog title={member ? 'Editar colaborador' : 'Novo colaborador'}
       submitLabel={member ? 'Salvar atendente' : 'Enviar convite'} error={error} busy={busy} onClose={() => setEditing(undefined)} onSubmit={save}>
       <label className="grid gap-1 text-sm">Nome<input name="name" required maxLength={100} defaultValue={member?.name} className={registrationField} /></label>
       <label className="grid gap-1 text-sm">E-mail<input name="email" required type="email" maxLength={150} defaultValue={member?.email} className={registrationField} /></label>
-      <label className="grid gap-1 text-sm">Perfil<select name="department" defaultValue={member?.department ?? 'sac'} className={registrationField}>
-        {Object.entries(departmentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      <label className="grid gap-1 text-sm">Perfil<select name="function_id" required defaultValue={member?.function_id ?? ''} className={registrationField}>
+        <option value="" disabled>Selecione a função</option>
+        {functions?.map(item => <option key={item.id} value={item.id}>{item.name} · {departmentLabels[item.department]}</option>)}
       </select></label>
       {member && !member.invite_pending && <label className="flex items-center gap-2 text-sm"><input name="active" type="checkbox" defaultChecked={member.is_active} /> Atendente ativo</label>}
     </RegistrationDialog>}
-  </SettingsCard>;
+  </section>;
 }

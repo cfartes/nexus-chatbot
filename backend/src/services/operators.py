@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from src.repositories.operators import OperatorRepository
-from src.schemas.operators import AcceptInvite, OperatorCreate, OperatorRecord, OperatorUpdate
+from src.schemas.operators import AcceptInvite, FunctionInput, OperatorCreate, OperatorFunction, OperatorRecord, OperatorUpdate
 from src.services.integrations import IntegrationService, IntegrationUnavailable
 from src.services.passwords import hash_password
 from src.services.resend import ResendClient, ResendRejected
@@ -18,7 +18,7 @@ class OperatorService:
         self._origin = origin
         self._slots = Semaphore(2)
 
-    async def list(self, tenant_id: UUID) -> list[OperatorRecord]:
+    async def list_operators(self, tenant_id: UUID) -> list[OperatorRecord]:
         return await self._repository.list(tenant_id)
 
     async def create(self, tenant_id: UUID, operator: OperatorCreate) -> OperatorRecord | None:
@@ -87,3 +87,15 @@ class OperatorService:
 
     async def delete(self, tenant_id: UUID, user_id: UUID) -> bool:
         return await self._repository.update(tenant_id, user_id, None) is not None
+
+    async def functions(self, tenant_id: UUID) -> list[OperatorFunction]:
+        return await self._repository.functions(tenant_id)
+
+    async def save_function(self, tenant_id: UUID, content: FunctionInput, function_id: UUID | None = None) -> OperatorFunction | None:
+        name = content.name.strip()
+        if not name:
+            raise ValueError("Informe o nome da função.")
+        return await self._repository.save_function(tenant_id, content.model_copy(update={"name": name}), function_id)
+
+    async def delete_function(self, tenant_id: UUID, function_id: UUID) -> bool:
+        return await self._repository.delete_function(tenant_id, function_id)

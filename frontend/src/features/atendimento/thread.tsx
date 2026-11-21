@@ -84,14 +84,14 @@ export function Thread({ conversation, operator, revision, onChange, onClaim }: 
   return <section aria-label="Conversa selecionada" className="grid min-w-0 grid-rows-[auto_1fr_auto] overflow-hidden rounded-2xl border border-slate-200 bg-white">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
       <section><h2 className="break-all text-lg font-semibold">{conversation.customer_name || conversation.chat_id.split('@')[0]}</h2>
-        <p className="text-sm text-slate-600">{{ waiting: 'Na fila humana', bot: 'Atendimento com IA', assigned: owner ? 'Atribuída a você' : 'Atribuída a outro atendente' }[conversation.state]}</p>
+        <p className="text-sm text-slate-600">{{ waiting: 'Na fila humana', bot: 'Atendimento com IA', assigned: owner ? 'Atribuída a você' : 'Atribuída a outro atendente', closed: 'Encerrada' }[conversation.state]}</p>
         {conversation.origin_name && <p className="text-sm text-slate-600">Origem · {conversation.origin_name}</p>}
         {conversation.department && <p className="text-sm text-slate-600">Perfil · {departmentLabels[conversation.department]}</p>}</section>
       <section className="flex flex-wrap items-center gap-2" aria-label="Ações da conversa">
         {conversation.state === 'waiting' && <Button label="Assumir" variant="primary" isDisabled={busy} onClick={() => void run(async () => { await mutate('/claim'); onClaim(); })} />}
-        {(admin || owner) &&
+        {(admin || owner) && conversation.state !== 'closed' &&
           <Button label={conversation.state === 'bot' ? 'Pausar IA' : 'Devolver à IA'} isDisabled={busy} onClick={() => void run(async () => { await mutate('/bot', 'PUT', { active: conversation.state !== 'bot' }); onChange(); })} />}
-        {(admin || owner) && <Button label="Encerrar atendimento" isDisabled={busy} onClick={() => void run(async () => { await mutate('/close'); onChange(); })} />}
+        {(admin || owner) && conversation.state !== 'closed' && <Button label="Encerrar atendimento" isDisabled={busy} onClick={() => void run(async () => { await mutate('/close'); onChange(); })} />}
         {(admin || owner) && conversation.state === 'assigned' && destinations.length > 0 && <form className="flex items-center gap-2" onSubmit={event => {
           event.preventDefault(); const user = new FormData(event.currentTarget).get('user');
           if (typeof user === 'string' && user) void run(async () => { await mutate('/transfer', 'POST', { user_id: user }); onChange(); });

@@ -163,10 +163,20 @@ async def check() -> None:
             assert json.loads((await call("conversations", "GET", "", admin_only=False))[1]) == []
             assert (await call("conversations", "POST", f"{bot_id}/claim", admin_only=False))[0] == 409
             second_id = next(user["id"] for user in target if user["name"] == "Segundo")
-            assert (await call("operators", "PUT", second_id, {"name": "Segundo", "is_active": True, "department": "suporte"}))[0] == 200
+            assert (await call("operators", "GET", "functions", admin_only=False))[0] == 403
+            status, function = await call("operators", "POST", "functions", {"name": "Suporte técnico", "department": "financeiro"})
+            assert status == 201
+            function_id = json.loads(function)["id"]
+            assert (await call("operators", "POST", "functions", {"name": "Suporte técnico", "department": "sac"}))[0] == 409
+            assert (await call("operators", "PUT", second_id, {"name": "Segundo", "is_active": True, "function_id": function_id}))[0] == 200
+            assert (await call("operators", "DELETE", f"functions/{function_id}"))[0] == 409
+            assert (await call("operators", "PUT", f"functions/{function_id}", {"name": "Suporte técnico", "department": "suporte"}))[0] == 200
             _, support = await login(b"SECOND@EXAMPLE.TEST")
             support_queue = (await request("GET", "", headers=support, prefix="conversations"))[2]
             assert json.loads(support_queue)[0]["id"] == bot_id
+            support_counts = json.loads((await request("GET", "counts", headers=support, prefix="conversations"))[2])
+            assert support_counts["waiting"] == 1 and support_counts["closed"] is None
+            assert json.loads((await call("conversations", "GET", "counts", admin_only=False))[1])["waiting"] == 0
             async with EventRepository(engine).listen(TENANT) as changed:
                 assert (await call("conversations", "PUT", f"{bot_id}/bot", {"active": True}))[0] == 204
                 await asyncio.wait_for(changed.wait(), timeout=2)

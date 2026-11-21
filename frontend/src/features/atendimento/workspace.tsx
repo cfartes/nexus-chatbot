@@ -5,16 +5,18 @@ import { VStack } from '@astryxdesign/core/Layout';
 import Image from 'next/image';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import logo from '../../assets/nexus-atende.webp';
-import { api, ApiError, errorMessage, type Conversation, type Operator, type Queue } from './api';
+import { api, ApiError, errorMessage, type Conversation, type Operator, type Queue, type QueueCounts } from './api';
 import { Thread } from './thread';
 import { Settings } from './settings';
 import { PasswordSettings } from './PasswordSettings';
 import { ClientSettings } from './ClientSettings';
 import { TransferNotices } from './TransferNotices';
+import { OperatorSettings } from './OperatorSettings';
+import { FunctionSettings } from './FunctionSettings';
 
 const queues: { id: Queue; label: string }[] = [
   { id: 'waiting', label: 'Em espera' }, { id: 'mine', label: 'Meus atendimentos' },
-  { id: 'bot', label: 'Com a IA' }, { id: 'assigned', label: 'Todos atribuídos' },
+  { id: 'bot', label: 'Com a IA' }, { id: 'assigned', label: 'Todos atribuídos' }, { id: 'closed', label: 'Encerrados' },
 ];
 export const fieldStyle = 'w-full rounded-lg border border-current/20 bg-transparent px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-2';
 const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -63,10 +65,12 @@ export function Workspace() {
   const [queue, setQueue] = useState<Queue>('waiting');
   const [offset, setOffset] = useState(0);
   const [rows, setRows] = useState<Conversation[]>([]);
+  const [counts, setCounts] = useState<QueueCounts>();
+  const [countsError, setCountsError] = useState(false);
   const [selected, setSelected] = useState<string>();
   const [focus, setFocus] = useState<string>();
   const [revision, setRevision] = useState(0);
-  const [view, setView] = useState<'inbox' | 'settings' | 'password' | 'clients'>('inbox');
+  const [view, setView] = useState<'inbox' | 'settings' | 'password' | 'clients' | 'functions' | 'operators'>('inbox');
   const [error, setError] = useState('');
   const [queueError, setQueueError] = useState('');
   const [connected, setConnected] = useState(false);
@@ -74,6 +78,11 @@ export function Workspace() {
   const openTransfer = useCallback((id: string) => {
     setView('inbox'); setQueue('mine'); setOffset(0); setSelected(id); setFocus(id);
   }, []);
+
+  function selectQueue(next: Queue) {
+    if (next === queue) return;
+    setQueue(next); setOffset(0); setRows([]); setSelected(undefined); setFocus(undefined);
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -109,23 +118,43 @@ export function Workspace() {
     return () => controller.abort();
   }, [operator, queue, offset, revision, focus]);
 
+  useEffect(() => {
+    if (!operator || view !== 'inbox') return;
+    const controller = new AbortController();
+    api<QueueCounts>('/conversations/counts', { signal: controller.signal }).then(values => {
+      if (!controller.signal.aborted) { setCounts(values); setCountsError(false); }
+    }).catch(() => {
+      if (!controller.signal.aborted) { setCounts(undefined); setCountsError(true); }
+    });
+    return () => controller.abort();
+  }, [operator, revision, view]);
+
   async function logout() {
     try { await api('/auth/logout', { method: 'POST' }); }
     catch (failure) {
       if (!(failure instanceof ApiError && failure.status === 401)) { setError(errorMessage(failure)); return; }
     }
     setOperator(null); setRows([]); setSelected(undefined); setFocus(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setConnected(false); setQueueError('');
+    setCounts(undefined); setCountsError(false);
   }
 
   if (operator === undefined) return <main className="p-8" aria-busy>Carregando sessão…</main>;
-  if (!operator) return <><Login onLogin={actor => { setError(''); setOperator(actor); }} />{error && <p role="alert" className="p-4 text-center text-red-700">{error}</p>}</>;
+  if (!operator) return <><Login onLogin={actor => {
+    setError(''); setQueueError(''); setCountsError(false); setRows([]); setCounts(undefined);
+    setSelected(undefined); setFocus(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setOperator(actor);
+  }} />{error && <p role="alert" className="p-4 text-center text-red-700">{error}</p>}</>;
   const active = rows.find(row => row.id === selected);
+  const visibleQueues = queues.filter(item => operator.role === 'admin' || (item.id !== 'assigned' && item.id !== 'closed'));
   return <main className="min-h-dvh bg-slate-100 text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 bg-nexus-petroleo px-5 py-4 text-white">
       <h1><Image src={logo} alt="Nexus Atende" className="h-auto w-32 rounded-md" unoptimized /></h1>
       <nav aria-label="Área de trabalho" className="flex flex-wrap items-center gap-4 text-sm">
         <button className="underline" onClick={() => setView('inbox')}>Atendimento</button>
         {operator.role === 'admin' && <button className="underline" onClick={() => setView('settings')}>Configurações</button>}
+        {operator.role === 'admin' && <>
+          <button className="underline" onClick={() => setView('functions')}>Funções</button>
+          <button className="underline" onClick={() => setView('operators')}>Colaboradores</button>
+        </>}
         {operator.platform_admin && <button className="underline" onClick={() => setView('clients')}>Clientes</button>}
         <button className="underline" onClick={() => setView('password')}>Alterar senha</button>
         <TransferNotices key={operator.id} revision={revision} openConversation={openTransfer}
@@ -134,15 +163,27 @@ export function Workspace() {
       </nav>
     </header>
     {error && <p role="alert" className="bg-red-50 px-5 py-2 text-red-800">{error}</p>}
-    {view === 'password' ? <PasswordSettings /> : view === 'clients' && operator.platform_admin ? <ClientSettings platformTenant={operator.tenant_id} /> : view === 'settings' ? <Settings platformAdmin={operator.platform_admin} /> : <section className="mx-auto grid max-w-screen-2xl gap-4 p-4 md:min-h-[calc(100dvh-3.75rem)] md:grid-cols-[20rem_minmax(0,1fr)]" aria-label="Caixa de entrada">
+    {view === 'password' ? <PasswordSettings /> : view === 'clients' && operator.platform_admin ? <ClientSettings platformTenant={operator.tenant_id} />
+      : view === 'functions' && operator.role === 'admin' ? <FunctionSettings />
+      : view === 'operators' && operator.role === 'admin' ? <OperatorSettings />
+      : view === 'settings' ? <Settings platformAdmin={operator.platform_admin} />
+      : <section className="mx-auto grid max-w-screen-2xl gap-4 p-4 md:grid-cols-[20rem_minmax(0,1fr)]" aria-label="Caixa de entrada">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:col-span-2 lg:grid-cols-5" aria-label="Atendimentos por status" aria-busy={!counts && !countsError}>
+        {visibleQueues.map(item => <button key={item.id} type="button" aria-pressed={queue === item.id} onClick={() => selectQueue(item.id)}
+          className="flex min-w-0 flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4 text-left hover:bg-slate-50 aria-pressed:border-teal-600 aria-pressed:bg-teal-50">
+          <span className="text-sm text-slate-700">{item.label}</span>
+          <strong className="text-2xl tabular-nums">{counts?.[item.id] ?? '—'}</strong>
+        </button>)}
+        {countsError && <p role="status" className="col-span-full text-sm text-slate-600">Contagens indisponíveis no momento.</p>}
+      </section>
       <aside className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
         {queueError && <p role="alert" className="bg-red-50 p-4 text-sm text-red-800">{queueError}</p>}
         <header className="grid gap-2 border-b border-slate-200 p-4"><h2 className="text-lg font-semibold">Conversas</h2>
           <p className="text-xs text-slate-600">{connected ? 'Atualizações ao vivo' : 'Atualização periódica'}</p>
           <label className="grid gap-1 text-sm">Fila<select className={fieldStyle} value={queue} onChange={event => {
             const next = queues.find(item => item.id === event.target.value);
-            if (next) { setQueue(next.id); setOffset(0); setRows([]); setSelected(undefined); setFocus(undefined); }
-          }}>{queues.filter(item => item.id !== 'assigned' || operator.role === 'admin').map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+            if (next) selectQueue(next.id);
+          }}>{visibleQueues.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         </header>
         <VStack className="max-h-[26rem] overflow-y-auto md:max-h-[65vh]">
           {rows.length === 0 && <p className="p-4 text-sm text-slate-600">Nenhuma conversa nesta fila.</p>}

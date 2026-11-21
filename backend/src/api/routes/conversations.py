@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 
 from src.api.routes.auth import authenticated_operator, mutation_operator
 from src.schemas.auth import Operator
-from src.schemas.conversations import BotStateRequest, ConversationSummary, HistoryMessage, Queue, SendTextRequest, TransferNotice, TransferRequest
+from src.schemas.conversations import BotStateRequest, ConversationSummary, HistoryMessage, Queue, QueueCounts, SendTextRequest, TransferNotice, TransferRequest
 from src.schemas.work import WorkReceipt
 from src.services.conversations import BotUnavailable, ConversationService, ConversationUnavailable
 from src.services.events import ConversationEvents
@@ -48,6 +48,12 @@ async def transfer_notices(actor: Reader, service: Service, response: Response) 
 @router.delete("/transfer-notices/{notice_id}", status_code=204)
 async def acknowledge_transfer(notice_id: UUID, actor: Writer, service: Service) -> None:
     await service.acknowledge_transfer(actor, notice_id)
+
+
+@router.get("/counts")
+async def queue_counts(actor: Reader, service: Service, response: Response) -> QueueCounts:
+    response.headers["Cache-Control"] = "no-store"
+    return await service.queue_counts(actor)
 
 
 @router.get("")

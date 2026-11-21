@@ -90,7 +90,9 @@ O administrador de cada empresa define o destinatário em **Avisos de atendiment
 
 Administradores e atendentes responsáveis podem transferir conversas atribuídas. O destinatário recebe um e-mail individual pelo Resend e um aviso no painel que permanece até ser fechado ou até abrir a conversa. Para exibir também a notificação do sistema, use **Ativar notificações do sistema** no painel e conceda a permissão solicitada pelo navegador.
 
-Em **Configurações → Atendentes**, use **Novo atendente** ou **Editar** para abrir o cadastro em uma janela modal. Cada atendente tem perfil Comercial, Financeiro, Suporte ou SAC. Quando o cliente pede atendimento humano, o bot mostra um menu numerado e encaminha à fila do perfil escolhido. O administrador vê todas as filas. A exclusão remove o atendente da lista, bloqueia o acesso e devolve as conversas atribuídas à fila.
+Use **Funções** para cadastrar o nome do perfil e vinculá-lo a Comercial, Financeiro, Suporte ou SAC. Em **Colaboradores**, inclua ou edite atendentes em uma janela modal e selecione a função no campo **Perfil**. Quando o cliente pede atendimento humano, o bot mostra um menu numerado e encaminha à fila do setor escolhido.
+
+Os cards em **Atendimento** mostram as contagens completas das filas e funcionam como filtros. O administrador também vê **Todos atribuídos** e **Encerrados**. O [manual do cliente](MANUAL_DO_CLIENTE.pdf) cobre a operação do administrador da empresa e do colaborador.
 
 O cadastro de **Clientes** do SuperAdmin usa janelas modais com rolagem nos campos e botões visíveis no rodapé. Registra nome, CPF ou CNPJ com máscara, telefone e e-mail de contato. O endereço tem campos separados para CEP, rua, número, bairro, cidade e UF. Ao digitar oito dígitos no CEP, o painel consulta o ViaCEP automaticamente e preenche os dados disponíveis. A exclusão arquiva o cliente e preserva o histórico. Endereços anteriores aparecem no modal enquanto o cadastro estruturado não é preenchido.
 

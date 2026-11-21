@@ -5,7 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
 from src.schemas.auth import Operator
-from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue, TransferNotice
+from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue, QueueCounts, TransferNotice
+
+WAITING_SCOPE = """(:admin OR conversations.department IS NULL OR EXISTS (
+    SELECT 1 FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :actor_id
+        AND department = conversations.department
+))"""
 
 
 class ConversationRepository:
@@ -23,7 +28,7 @@ class ConversationRepository:
     async def list_queue(self, actor: Operator, queue: Queue, limit: int, offset: int, focus: UUID | None = None) -> list[ConversationSummary]:
         state = "assigned" if queue == "mine" else queue
         async with tenant_transaction(self._engine, actor.tenant_id) as connection:
-            result = await connection.execute(text("""
+            result = await connection.execute(text(f"""
                 SELECT conversations.id, customers.chat_id, customers.name AS customer_name,
                     conversations.state, conversations.assigned_user_id, conversations.last_interaction,
                     origins.name AS origin_name, conversations.department
@@ -34,10 +39,7 @@ class ConversationRepository:
                     ON (origins.tenant_id, origins.slug) = (conversations.tenant_id, conversations.origin_slug)
                 WHERE conversations.tenant_id = :tenant_id AND conversations.state = :state
                     AND (NOT :mine OR conversations.assigned_user_id = :actor_id)
-                    AND (:admin OR conversations.state <> 'waiting' OR conversations.department IS NULL OR EXISTS (
-                        SELECT 1 FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :actor_id
-                            AND department = conversations.department
-                    ))
+                    AND (conversations.state <> 'waiting' OR {WAITING_SCOPE})
                 ORDER BY (conversations.id = :focus) DESC NULLS LAST, conversations.last_interaction DESC, conversations.id DESC
                 LIMIT :limit OFFSET :offset
             """), {
@@ -45,6 +47,18 @@ class ConversationRepository:
                 "actor_id": actor.id, "limit": limit, "offset": offset, "focus": focus, "admin": actor.role == "admin",
             })
             return [ConversationSummary.model_validate(row) for row in result.mappings()]
+
+    async def queue_counts(self, actor: Operator) -> QueueCounts:
+        async with tenant_transaction(self._engine, actor.tenant_id) as connection:
+            result = await connection.execute(text(f"""
+                SELECT count(*) FILTER (WHERE state = 'waiting' AND {WAITING_SCOPE}) AS waiting,
+                    count(*) FILTER (WHERE state = 'bot') AS bot,
+                    count(*) FILTER (WHERE state = 'assigned' AND assigned_user_id = :actor_id) AS mine,
+                    CASE WHEN :admin THEN count(*) FILTER (WHERE state = 'assigned') END AS assigned,
+                    CASE WHEN :admin THEN count(*) FILTER (WHERE state = 'closed') END AS closed
+                FROM nexus_atende.conversations WHERE tenant_id = :tenant_id
+            """), {"tenant_id": actor.tenant_id, "actor_id": actor.id, "admin": actor.role == "admin"})
+            return QueueCounts.model_validate(result.mappings().one())
 
     async def history(
         self, actor: Operator, conversation_id: UUID, limit: int, before: UUID | None,

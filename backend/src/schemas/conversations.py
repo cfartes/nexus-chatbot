@@ -7,14 +7,22 @@ from pydantic import BaseModel, Field
 from src.schemas.work import WorkStatus
 from src.schemas.operators import Department
 
-Queue = Literal["waiting", "bot", "mine", "assigned"]
+Queue = Literal["waiting", "bot", "mine", "assigned", "closed"]
+
+
+class QueueCounts(BaseModel):
+    waiting: int
+    bot: int
+    mine: int
+    assigned: int | None
+    closed: int | None
 
 
 class ConversationSummary(BaseModel):
     id: UUID
     chat_id: str
     customer_name: str | None
-    state: Literal["waiting", "bot", "assigned"]
+    state: Literal["waiting", "bot", "assigned", "closed"]
     assigned_user_id: UUID | None
     last_interaction: datetime
     origin_name: str | None = None

@@ -56,6 +56,9 @@ async def check() -> None:
         assert (await call("GET", history_path, loser))[0] == 404
         assert json.loads((await call("GET", "", winner, query=b"queue=mine"))[1])[0]["assigned_user_id"] == winner_id
         assert (await call("GET", "", winner, query=b"queue=assigned"))[0] == 403
+        assert (await call("GET", "", winner, query=b"queue=closed"))[0] == 403
+        status, counts = await call("GET", "counts", admin)
+        assert status == 200 and json.loads(counts)["assigned"] == 1 and json.loads(counts)["closed"] == 0
         assert (await call("GET", "", admin, query=b"queue=assigned"))[0] == 200
         transfer_path = f"{conversation_id}/transfer"
         target = json.dumps({"user_id": loser_id}).encode()

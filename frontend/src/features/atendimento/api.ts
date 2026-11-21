@@ -1,9 +1,11 @@
-export type Queue = 'waiting' | 'bot' | 'mine' | 'assigned';
+export type Queue = 'waiting' | 'bot' | 'mine' | 'assigned' | 'closed';
+export type QueueCounts = Record<Queue, number | null>;
 export const departmentLabels = { comercial: 'Comercial', financeiro: 'Financeiro', suporte: 'Suporte', sac: 'SAC' };
 export type Department = keyof typeof departmentLabels;
+export type OperatorFunction = { id: string; name: string; department: Department };
 export interface Operator { id: string; name: string; tenant_id: string; role: 'admin' | 'operator'; platform_admin: boolean }
 export interface Conversation {
-  id: string; chat_id: string; customer_name: string | null; state: 'waiting' | 'bot' | 'assigned';
+  id: string; chat_id: string; customer_name: string | null; state: 'waiting' | 'bot' | 'assigned' | 'closed';
   assigned_user_id: string | null; last_interaction: string; origin_name: string | null;
   department: Department | null;
 }

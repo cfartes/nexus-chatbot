@@ -4,7 +4,7 @@ from src.repositories.bot import BotRepository
 from src.repositories.conversations import ConversationRepository
 from src.repositories.outgoing_messages import OutgoingMessageRepository
 from src.schemas.auth import Operator
-from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue, SendTextRequest, TransferNotice
+from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue, QueueCounts, SendTextRequest, TransferNotice
 from src.schemas.work import WorkReceipt
 from src.services.integrations import IntegrationService
 
@@ -43,9 +43,12 @@ class ConversationService:
             raise ConversationUnavailable
 
     async def list_queue(self, actor: Operator, queue: Queue, limit: int, offset: int, focus: UUID | None = None) -> list[ConversationSummary]:
-        if queue == "assigned" and actor.role != "admin":
+        if queue in {"assigned", "closed"} and actor.role != "admin":
             raise PermissionError
         return await self._repository.list_queue(actor, queue, limit, offset, focus)
+
+    async def queue_counts(self, actor: Operator) -> QueueCounts:
+        return await self._repository.queue_counts(actor)
 
     async def history(
         self, actor: Operator, conversation_id: UUID, limit: int, before: UUID | None,

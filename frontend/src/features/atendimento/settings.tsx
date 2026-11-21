@@ -7,7 +7,6 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, errorMessage, upload } from './api';
 import { Integrations } from './integrations';
-import { OperatorSettings } from './OperatorSettings';
 import { SettingsCard, settingsGrid } from './settings-card';
 
 type Source = { source: string; chunks: number };
@@ -166,7 +165,6 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
           }, 'Sessão iniciada. Aguarde o QR Code.')} />}
         <Button label="Atualizar conexão" isDisabled={busy} onClick={() => void loadConnection()} />
       </SettingsCard>
-      <OperatorSettings />
       <SettingsCard title="Base de conhecimento" state={sourcesError ? 'warning' : !sources ? 'loading' : sources.length ? 'ready' : 'missing'} detail={sourcesError ? 'Falha ao consultar as fontes' : sources?.length ? 'Há fontes adicionadas' : 'Adicione a primeira fonte'} action={<Button type="submit" form="settings-source" label="Salvar fonte" variant="primary" isDisabled={busy || !sources || Boolean(sourcesError)} />}>
         <p className="text-sm text-slate-600">Adicione fontes sobre a Nexus, seus serviços, aplicativos e funcionalidades.</p>
         {fileProgress !== undefined && <ProgressBar label={fileProgress === 'processing' ? 'Processando e indexando o arquivo…' : 'Enviando arquivo…'}
