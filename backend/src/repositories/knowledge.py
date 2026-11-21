@@ -78,13 +78,33 @@ class KnowledgeRepository:
             """), {"tenant_id": tenant_id})
             return [KnowledgeSource.model_validate(row) for row in result.mappings()]
 
-    async def search(self, tenant_id: UUID, embedding: list[float], embedding_space: str) -> list[KnowledgeMatch]:
+    async def search(
+        self, tenant_id: UUID, embedding: list[float], embedding_space: str, query: str, *, candidates: int = 3,
+    ) -> list[KnowledgeMatch]:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             result = await connection.execute(text("""
-                SELECT source, content FROM nexus_atende.knowledge_chunks WHERE tenant_id = :tenant_id
-                    AND embedding_space = :embedding_space
-                ORDER BY embedding <=> CAST(CAST(:embedding AS text) AS vector) LIMIT 3
-            """), {"tenant_id": tenant_id, "embedding": str(embedding), "embedding_space": embedding_space})
+                WITH keywords AS (
+                    SELECT CAST(string_agg(quote_literal(term), ' | ') AS tsquery) AS query
+                    FROM unnest(tsvector_to_array(to_tsvector('portuguese', :query))) AS terms(term)
+                ), scoped AS NOT MATERIALIZED (
+                    SELECT source, position, content, embedding FROM nexus_atende.knowledge_chunks
+                    WHERE tenant_id = :tenant_id AND embedding_space = :embedding_space
+                ), semantic AS (
+                    SELECT source, position, content FROM scoped
+                    ORDER BY embedding <=> CAST(CAST(:embedding AS text) AS vector), source, position
+                    LIMIT :candidates
+                ), lexical AS (
+                    SELECT source, position, content FROM scoped CROSS JOIN keywords
+                    WHERE to_tsvector('portuguese', source || ' ' || content) @@ keywords.query
+                    ORDER BY ts_rank(to_tsvector('portuguese', source || ' ' || content), keywords.query) DESC,
+                        source, position
+                    LIMIT :candidates
+                )
+                SELECT source, content FROM semantic
+                UNION
+                SELECT source, content FROM lexical
+            """), {"tenant_id": tenant_id, "embedding": str(embedding), "embedding_space": embedding_space,
+                   "query": query, "candidates": candidates})
             return [KnowledgeMatch.model_validate(row) for row in result.mappings()]
 
     async def index_ready(self, tenant_id: UUID, embedding_space: str) -> tuple[bool, bool]:

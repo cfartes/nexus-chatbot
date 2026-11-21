@@ -8,3 +8,5 @@
 6. Validar em produção o primeiro cliente adicional, incluindo o convite do administrador, o pareamento de uma sessão WhatsApp própria e o recebimento de mensagens.
 
 - Validar na VPS a abertura de uma conversa pelo link do e-mail, com e sem sessão ativa no painel.
+
+- Medir no piloto os encaminhamentos evitáveis e a qualidade das respostas com perguntas reais anonimizadas e o provedor de produção.

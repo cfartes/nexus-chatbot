@@ -93,7 +93,7 @@ class BotService:
         context.question = question
         context.welcome_message = ""
         result, summary = await self._answer(tenant_id, context)
-        answer = _prefixed(prefix, result.message) if result.status == "answered" else None
+        answer = _prefixed(prefix, result.message) if result.status in {"answered", "clarify"} else None
         fallback = TECHNICAL if result.status == "unavailable" else result.message
         await self._repository.resolve(tenant_id, work, answer, _prefixed(prefix, fallback), summary, opening)
 
@@ -108,7 +108,8 @@ class BotService:
         welcome = f"{context.welcome_message}\n\n" if not context.recent and context.welcome_message else ""
         fallback = welcome + FALLBACK
         if _human_requested(context.question):
-            return PreviewResult(status="handoff", message=welcome + DEPARTMENT_MENU, sources=[]), None
+            return PreviewResult(status="handoff", message=welcome + DEPARTMENT_MENU, sources=[],
+                                 reason="O cliente pediu atendimento humano."), None
         client = await self._integrations.ai(tenant_id)
         if client is None:
             return PreviewResult(status="unavailable", message="A IA está indisponível. Confira o provedor e as credenciais.", sources=[]), None
@@ -125,22 +126,42 @@ class BotService:
                 logger.warning("Conversation recap unavailable (%s)", type(error).__name__)
         sources: list[str] = []
         try:
-            query = f"{context.origin_name}: {context.question}" if context.origin_name else context.question
-            knowledge = await self._knowledge.search(tenant_id, await client.embed(query[:4000]), client.embedding_space)
+            query = (f"{context.origin_name}: {context.question}" if context.origin_name else context.question)[:4000]
+            prior = [line.removeprefix("customer: ") for line in context.recent if line.startswith("customer: ")]
+            context_terms = "\n".join(line[:250] for line in [line for line in prior if not _generic(line)][-2:])
+            contextual = f"{query}\n{context_terms}"[:4000] if context_terms else query
+            first = contextual if len(context.question.split()) <= 12 else query
+            vector = await client.embed(first)
+            knowledge = await self._knowledge.search(tenant_id, vector, client.embedding_space, first)
             if not knowledge:
                 return PreviewResult(status="unavailable", message="A base mudou durante a consulta. Tente novamente.", sources=[]), summary
             sources = list(dict.fromkeys(match.source for match in knowledge))
-            result = await client.answer(context, [match.content for match in knowledge], summary or context.previous_summary)
+            recap = summary or context.previous_summary
+            result = await client.answer(context, [match.content for match in knowledge], recap)
+            if result.needs_human:
+                second = query if first != query else contextual
+                expanded = await self._knowledge.search(tenant_id, vector if second == first else await client.embed(second),
+                                                        client.embedding_space, second, candidates=6)
+                extra = [match for match in expanded if match not in knowledge]
+                if extra:
+                    knowledge = (knowledge + extra)[:12]
+                    sources = list(dict.fromkeys(match.source for match in knowledge))
+                    result = await client.answer(context, [match.content for match in knowledge], recap)
         except (OSError, ValueError):
             return PreviewResult(status="unavailable", message="Não foi possível concluir a consulta. Confira a chave, o modelo e os limites do provedor.", sources=sources), summary
         answer = result.answer.strip()
+        excerpts = knowledge
         if result.needs_human:
             if outdated:
-                return PreviewResult(status="unavailable", message=reindex, sources=sources), summary
-            return PreviewResult(status="handoff", message=fallback, sources=sources), summary
+                return PreviewResult(status="unavailable", message=reindex, sources=sources, excerpts=excerpts), summary
+            return PreviewResult(status="handoff", message=fallback, sources=sources, excerpts=excerpts,
+                                 reason="Os trechos consultados não sustentaram uma resposta."), summary
         if not 0 < len(answer) <= 4096 or "\x00" in answer:
             return PreviewResult(status="unavailable", message="O modelo não retornou uma resposta utilizável. Confira o modelo configurado.", sources=sources), summary
-        return PreviewResult(status="answered", message=(welcome + answer)[:4096], sources=sources), summary
+        if result.needs_clarification:
+            return PreviewResult(status="clarify", message=(welcome + answer)[:4096], sources=sources, excerpts=excerpts,
+                                 reason="Falta um detalhe que o cliente pode esclarecer."), summary
+        return PreviewResult(status="answered", message=(welcome + answer)[:4096], sources=sources, excerpts=excerpts), summary
 
 
 def _normalized(value: str) -> str:

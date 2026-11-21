@@ -22,6 +22,7 @@ from src.repositories.conversations import ConversationRepository
 from src.repositories.database import tenant_transaction
 from src.repositories.events import EventRepository
 from src.repositories.integrations import IntegrationRepository
+from src.repositories.knowledge import KnowledgeRepository
 from src.repositories.work import enqueue
 from src.schemas.integrations import OpenWASettings
 from src.services.integrations import IntegrationService, tenant_webhook_secret
@@ -103,8 +104,25 @@ async def check() -> None:
                 status, preview = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
             assert status == 200 and json.loads(preview) == {
                 "status": "answered", "message": "Bem-vindo à Nexus!\n\nAtendemos em horário comercial.",
-                "sources": ["Expediente"],
+                "sources": ["Expediente"], "reason": None,
+                "excerpts": [{"source": "Expediente", "content": "Atendemos em horário comercial."}],
             }
+            clarification = {"choices": [{"message": {"content": json.dumps({
+                "needs_human": False, "needs_clarification": True, "answer": "Qual plano você quer consultar?",
+            })}}]}
+            with patch("src.services.openai.request_json", side_effect=[vector, clarification]):
+                status, preview = await call("knowledge", "POST", "preview", {"question": "Quanto custa?"})
+            assert status == 200 and json.loads(preview)["status"] == "clarify"
+            knowledge_repository = KnowledgeRepository(engine)
+            await knowledge_repository.replace(TENANT, "Planos", [
+                (f"Detalhes da modalidade {index}.", [1.0] + [0.0] * 767) for index in range(6)
+            ], "openai:text-embedding-3-small")
+            no_answer = {"choices": [{"message": {"content": '{"needs_human":true,"answer":""}'}}]}
+            with patch("src.services.openai.request_json", side_effect=[vector, no_answer, completion]) as provider:
+                status, preview = await call("knowledge", "POST", "preview", {"question": "Quanto custa?"})
+            assert status == 200 and json.loads(preview)["status"] == "answered"
+            assert provider.call_count == 3 and len(json.loads(preview)["excerpts"]) == 6
+            await knowledge_repository.replace(TENANT, "Planos", [])
             status, preview = await call("knowledge", "POST", "preview", {"question": "Quero um atendente"})
             assert status == 200 and json.loads(preview)["status"] == "handoff"
             with patch("src.services.openai.request_json", side_effect=[vector, completion]):
@@ -124,6 +142,7 @@ async def check() -> None:
                         break
 
             for message_id, content in (("work-ai", "Qual é o expediente?"), ("work-name", "Meu nome é Ana Souza"),
+                                        ("work-follow-up", "E no sábado?"),
                                         ("work-human", "Quero falar com um atendente"), ("work-invalid-category", "9"),
                                         ("work-category", "3")):
                 await receive(message_id, content)
@@ -141,6 +160,11 @@ async def check() -> None:
                         assert whatsapp.call_count == 1 and ai.call_count == 2 and resend.call_count == 0
                         assert whatsapp.call_args.args[2]["text"] == "Prazer, Ana Souza!\n\nAtendemos em horário comercial."
                         assert "Qual é o expediente?" in str(ai.call_args.args[2])
+                        continue
+                    elif message_id == "work-follow-up":
+                        assert whatsapp.call_count == 1 and ai.call_count == 2 and resend.call_count == 0
+                        embedded = ai.call_args_list[0].args[2]["input"]
+                        assert "E no sábado?" in embedded[0] and "Qual é o expediente?" in embedded[0]
                         continue
                     elif message_id in {"work-human", "work-invalid-category"}:
                         assert whatsapp.call_count == 1 and ai.call_count == 0 and resend.call_count == 0

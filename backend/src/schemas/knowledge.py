@@ -30,9 +30,11 @@ class PreviewRequest(BaseModel):
 
 
 class PreviewResult(BaseModel):
-    status: Literal["answered", "handoff", "unavailable"]
+    status: Literal["answered", "clarify", "handoff", "unavailable"]
     message: str
     sources: list[str]
+    reason: str | None = None
+    excerpts: list["KnowledgeMatch"] = Field(default_factory=list)
 
 
 class KnowledgeMatch(BaseModel):
@@ -48,6 +50,7 @@ class KnowledgeURL(BaseModel):
 class Answer(BaseModel):
     needs_human: bool
     answer: str
+    needs_clarification: bool = False
 
 
 class BotContext(BaseModel):

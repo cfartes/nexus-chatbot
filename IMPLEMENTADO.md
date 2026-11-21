@@ -185,3 +185,5 @@ O projeto Docker `nexus-atende-prod` instala banco, API, painel e worker. O Trae
 Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.deploy/` antes das migrações e pode reiniciar os serviços do Nexus Atende. Depois que os serviços internos ficam saudáveis, ele verifica página e API por HTTPS. Se a checagem a partir da VPS for inconclusiva, exibe o diagnóstico como aviso e mantém os serviços ativos. `--skip-public-check` limita a validação à saúde interna.
 
 - Os e-mails de encaminhamento humano e transferência incluem o nome do contato, o horário de Brasília e o link da conversa com a empresa pré-selecionada.
+
+- A IA combina busca semântica e textual em português, usa o contexto recente em perguntas curtas, amplia a busca antes do encaminhamento e pode pedir esclarecimento. O teste no painel exibe trechos e o motivo da decisão.

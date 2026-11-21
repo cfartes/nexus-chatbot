@@ -12,8 +12,10 @@ import { SettingsCard, settingsGrid } from './settings-card';
 type Source = { source: string; chunks: number };
 type Origin = { slug: string; name: string };
 type Connection = { status: string; phone_number: string | null; session_id: string | null; error?: string | null; retry_after?: number | null };
-type Preview = { status: 'answered' | 'handoff' | 'unavailable'; message: string; sources: string[] };
-const previewLabel = { answered: 'Resposta automática', handoff: 'Encaminharia para um atendente', unavailable: 'IA indisponível' };
+type Preview = { status: 'answered' | 'clarify' | 'handoff' | 'unavailable'; message: string; sources: string[];
+  reason?: string | null; excerpts?: { source: string; content: string }[] };
+const previewLabel = { answered: 'Resposta automática', clarify: 'Pediria um esclarecimento',
+  handoff: 'Encaminharia para um atendente', unavailable: 'IA indisponível' };
 const connectionLabels: Record<string, string> = {
   READY: 'Conectado', CONNECTED: 'Conectado', QR_READY: 'Escaneie o QR Code', STARTING: 'Iniciando',
   INITIALIZING: 'Iniciando', AUTHENTICATING: 'Autenticando', NOT_CONFIGURED: 'Sessão não configurada',
@@ -259,7 +261,17 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
       {preview && <section role="status" className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4">
         <h4 className="font-semibold">{previewLabel[preview.status]}</h4>
         <p className="whitespace-pre-wrap wrap-anywhere text-sm">{preview.message}</p>
+        {preview.reason && <p className="text-sm text-slate-700">{preview.reason}</p>}
         {preview.sources.length > 0 && <p className="wrap-anywhere text-sm text-slate-700">Fontes recuperadas: {preview.sources.join(', ')}</p>}
+        {preview.excerpts && preview.excerpts.length > 0 && <details>
+          <summary className="cursor-pointer text-sm font-medium">Trechos consultados</summary>
+          <ul className="mt-2 grid max-h-80 gap-3 overflow-auto">
+            {preview.excerpts.map((excerpt, index) => <li key={index} className="grid gap-1 text-sm">
+              <strong>{excerpt.source}</strong>
+              <p className="whitespace-pre-wrap wrap-anywhere">{excerpt.content}</p>
+            </li>)}
+          </ul>
+        </details>}
       </section>}
     </SettingsCard>
     </section>
