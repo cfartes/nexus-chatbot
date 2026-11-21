@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 class Worker:
     def __init__(self, engine: AsyncEngine, settings: Settings, tenant_id: UUID) -> None:
         self._tenant_id = tenant_id
+        self._public_origin = settings.public_origin
         self._repository = IntegrationRepository(engine)
         self._integrations = IntegrationService(self._repository, settings)
         self._tenants = TenantRepository(engine)
@@ -92,11 +93,12 @@ class Worker:
         if work.kind == "rag":
             await self._bot.process(self._tenant_id, work)
         elif work.kind == "notify" and resend:
-            if work.recipient_user_id is None:
-                await self._work.complete(self._tenant_id, work, await resend.notify(work))
+            notice = await self._work.email_notice(self._tenant_id, work)
+            if notice is None:
+                await self._work.complete(self._tenant_id, work, "cancelled")
             else:
-                recipient = await self._work.transfer_recipient(self._tenant_id, work)
-                await self._work.complete(self._tenant_id, work, await resend.notify(work, recipient) if recipient else "cancelled")
+                status = await resend.notify(work, notice, self._tenant_id, self._public_origin)
+                await self._work.complete(self._tenant_id, work, status)
         elif work.kind == "whatsapp" and openwa:
             await self._outgoing.dispatch(self._tenant_id, work, openwa.send_text)
         return True

@@ -21,6 +21,12 @@ class WorkReceipt(BaseModel):
     status: WorkStatus
 
 
+class EmailNotice(BaseModel):
+    customer_name: str
+    started_local: str
+    recipient: str | None
+
+
 class WhatsAppDispatch(BaseModel):
     status: Literal["sent", "failed", "uncertain", "pending"]
     provider_id: str | None = None

@@ -6,3 +6,5 @@
 4. Alimentar a base de conhecimento da Nexus e calibrar a qualidade do RAG com dúvidas reais anonimizadas. Agendamento de reimportação de URLs, provedores adicionais e ampliação do worker para várias empresas ficam para expansão do piloto.
 5. Cadastrar as origens dos produtos da Nexus no painel de produção e instalar os links de WhatsApp nas páginas correspondentes.
 6. Validar em produção o primeiro cliente adicional, incluindo o convite do administrador, o pareamento de uma sessão WhatsApp própria e o recebimento de mensagens.
+
+- Validar na VPS a abertura de uma conversa pelo link do e-mail, com e sem sessão ativa no painel.

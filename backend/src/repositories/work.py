@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from src.repositories.database import tenant_transaction
-from src.schemas.work import WorkItem, WorkKind, WorkStatus
+from src.schemas.work import EmailNotice, WorkItem, WorkKind, WorkStatus
 
 
 async def enqueue(
@@ -87,16 +87,25 @@ class WorkRepository:
             row = result.mappings().one_or_none()
             return WorkItem.model_validate(row) if row is not None else None
 
-    async def transfer_recipient(self, tenant_id: UUID, work: WorkItem) -> str | None:
+    async def email_notice(self, tenant_id: UUID, work: WorkItem) -> EmailNotice | None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
-            email: str | None = await connection.scalar(text("""
-                SELECT users.email FROM nexus_atende.users AS users
-                JOIN nexus_atende.conversations AS conversation ON conversation.tenant_id = users.tenant_id
-                    AND conversation.assigned_user_id = users.id
-                WHERE users.tenant_id = :tenant AND users.id = :recipient AND users.is_active
-                    AND conversation.id = :conversation AND conversation.state = 'assigned'
-            """), {"tenant": tenant_id, "recipient": work.recipient_user_id, "conversation": work.conversation_id})
-            return email
+            result = await connection.execute(text("""
+                SELECT coalesce(nullif(trim(customer.name), ''), 'Nome não informado') AS customer_name,
+                    to_char(item.created_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI') AS started_local,
+                    recipient.email AS recipient
+                FROM nexus_atende.work_items AS item
+                JOIN nexus_atende.conversations AS conversation
+                    ON (conversation.tenant_id, conversation.id) = (item.tenant_id, item.conversation_id)
+                JOIN nexus_atende.customers AS customer
+                    ON (customer.tenant_id, customer.id) = (conversation.tenant_id, conversation.customer_id)
+                LEFT JOIN nexus_atende.users AS recipient ON recipient.tenant_id = item.tenant_id
+                    AND recipient.id = item.recipient_user_id AND recipient.is_active
+                    AND recipient.id = conversation.assigned_user_id AND conversation.state = 'assigned'
+                WHERE item.tenant_id = :tenant AND item.id = :id
+                    AND (item.recipient_user_id IS NULL OR recipient.email IS NOT NULL)
+            """), {"tenant": tenant_id, "id": work.id})
+            row = result.mappings().one_or_none()
+            return EmailNotice.model_validate(row) if row is not None else None
 
     async def complete(self, tenant_id: UUID, work: WorkItem, status: WorkStatus) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:

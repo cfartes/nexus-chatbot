@@ -78,6 +78,17 @@ export function Workspace() {
   const openTransfer = useCallback((id: string) => {
     setView('inbox'); setQueue('mine'); setOffset(0); setSelected(id); setFocus(id);
   }, []);
+  const openEmailConversation = useCallback((actor: Operator) => {
+    const url = new URL(window.location.href);
+    const id = url.searchParams.get('atendimento');
+    if (!id || url.searchParams.get('empresa') !== actor.tenant_id ||
+        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) return;
+    setQueue(url.searchParams.get('fila') === 'mine' ? 'mine' : 'waiting');
+    setOffset(0); setSelected(id); setFocus(id);
+    url.searchParams.delete('atendimento');
+    url.searchParams.delete('fila');
+    window.history.replaceState(window.history.state, '', url);
+  }, []);
 
   function selectQueue(next: Queue) {
     if (next === queue) return;
@@ -86,13 +97,17 @@ export function Workspace() {
 
   useEffect(() => {
     const controller = new AbortController();
-    api<Operator>('/auth/me', { signal: controller.signal }).then(setOperator).catch(failure => {
+    api<Operator>('/auth/me', { signal: controller.signal }).then(actor => {
+      if (controller.signal.aborted) return;
+      openEmailConversation(actor);
+      setOperator(actor);
+    }).catch(failure => {
       if (controller.signal.aborted) return;
       if (!(failure instanceof ApiError && failure.status === 401)) setError(errorMessage(failure));
       setOperator(null);
     });
     return () => controller.abort();
-  }, []);
+  }, [openEmailConversation]);
 
   useEffect(() => {
     if (!operator) return;
@@ -141,7 +156,8 @@ export function Workspace() {
   if (operator === undefined) return <main className="p-8" aria-busy>Carregando sessão…</main>;
   if (!operator) return <><Login onLogin={actor => {
     setError(''); setQueueError(''); setCountsError(false); setRows([]); setCounts(undefined);
-    setSelected(undefined); setFocus(undefined); setQueue('waiting'); setOffset(0); setView('inbox'); setOperator(actor);
+    setSelected(undefined); setFocus(undefined); setQueue('waiting'); setOffset(0); setView('inbox');
+    openEmailConversation(actor); setOperator(actor);
   }} />{error && <p role="alert" className="p-4 text-center text-red-700">{error}</p>}</>;
   const active = rows.find(row => row.id === selected);
   const visibleQueues = queues.filter(item => operator.role === 'admin' || (item.id !== 'assigned' && item.id !== 'closed'));

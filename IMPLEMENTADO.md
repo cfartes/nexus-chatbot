@@ -183,3 +183,5 @@ O instalador tenta reutilizar a rede, o entrypoint HTTPS e o resolver ACME do Ro
 O projeto Docker `nexus-atende-prod` instala banco, API, painel e worker. O Traefik roteia o painel e `/api/v1/` no mesmo domínio, sem portas do aplicativo publicadas no host. O instalador gera os segredos em `.env.production` e grava o primeiro acesso em `.deploy/primeiro-acesso.txt`. Consulte os dados privadamente na VPS. Preserve a chave de criptografia e os demais segredos ao atualizar.
 
 Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.deploy/` antes das migrações e pode reiniciar os serviços do Nexus Atende. Depois que os serviços internos ficam saudáveis, ele verifica página e API por HTTPS. Se a checagem a partir da VPS for inconclusiva, exibe o diagnóstico como aviso e mantém os serviços ativos. `--skip-public-check` limita a validação à saúde interna.
+
+- Os e-mails de encaminhamento humano e transferência incluem o nome do contato, o horário de Brasília e o link da conversa com a empresa pré-selecionada.

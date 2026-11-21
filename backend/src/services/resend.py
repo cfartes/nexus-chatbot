@@ -3,11 +3,12 @@ from http.client import HTTPException
 from json import loads
 import logging
 from urllib.error import HTTPError
-from uuid import uuid4
+from urllib.parse import urlencode
+from uuid import UUID, uuid4
 
 from pydantic import SecretStr
 
-from src.schemas.work import WorkItem, WorkStatus
+from src.schemas.work import EmailNotice, WorkItem, WorkStatus
 from src.services.provider_http import request_json
 
 logger = logging.getLogger(__name__)
@@ -58,13 +59,20 @@ class ResendClient:
         if not accepted:
             raise ResendRejected("O Resend não retornou uma confirmação de envio")
 
-    async def notify(self, work: WorkItem, recipient: str | None = None) -> WorkStatus:
+    async def notify(self, work: WorkItem, notice: EmailNotice, tenant_id: UUID, public_origin: str | None) -> WorkStatus:
         retry: WorkStatus = "pending" if work.attempts < 3 else "failed"
+        subject = "Conversa transferida para você" if notice.recipient else "Atendimento aguardando"
+        intro = "Uma conversa foi transferida para você." if notice.recipient else "Uma conversa precisa de atendimento humano."
+        queue = "mine" if notice.recipient else "waiting"
+        query = urlencode({"empresa": str(tenant_id), "atendimento": str(work.conversation_id), "fila": queue})
+        content = (
+            f"{intro}\n\nCliente: {notice.customer_name}\n"
+            f"Início do atendimento humano: {notice.started_local} (horário de Brasília)"
+        )
+        if public_origin:
+            content += f"\n\nAbrir atendimento:\n{public_origin.rstrip('/')}/?{query}"
         try:
-            subject = "Conversa transferida para você" if recipient else "Atendimento aguardando"
-            intro = "Uma conversa foi transferida para você. Abra Meus atendimentos no Nexus Atende." if recipient else "Uma conversa precisa de atendimento humano. Abra a fila do Nexus Atende."
-            accepted = await self._send(recipient or self._recipient, f"Nexus Atende | {subject}",
-                f"{intro}\n\nReferência: {work.conversation_id}",
+            accepted = await self._send(notice.recipient or self._recipient, f"Nexus Atende | {subject}", content,
                 f"nexus-atende/handoff/{work.id}")
         except HTTPError as error:
             logger.warning("Resend rejected handoff notification: HTTP %s", error.code)
