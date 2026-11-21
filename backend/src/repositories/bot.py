@@ -13,7 +13,8 @@ from src.schemas.work import WorkItem
 
 async def _handoff(connection: AsyncConnection, tenant_id: UUID, conversation_id: UUID) -> None:
     await connection.execute(text("""
-        UPDATE nexus_atende.conversations SET state = 'waiting', assigned_user_id = NULL, awaiting_department = false
+        UPDATE nexus_atende.conversations SET state = 'waiting', assigned_user_id = NULL, awaiting_department = false,
+            inactivity_due_at = NULL, inactivity_notice_id = NULL
         WHERE tenant_id = :tenant_id AND id = :id
     """), {"tenant_id": tenant_id, "id": conversation_id})
     await enqueue(connection, tenant_id, conversation_id, "notify")
@@ -130,7 +131,7 @@ class BotRepository:
             if active and row.state != "bot":
                 await connection.execute(text("""
                     UPDATE nexus_atende.conversations SET state = 'bot', assigned_user_id = NULL,
-                        department = NULL, awaiting_department = false
+                        department = NULL, awaiting_department = false, inactivity_due_at = NULL, inactivity_notice_id = NULL
                     WHERE tenant_id = :tenant_id AND id = :id
                 """), values)
             elif not active and row.state == "bot":

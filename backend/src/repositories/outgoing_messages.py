@@ -46,7 +46,7 @@ class OutgoingMessageRepository:
     ) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             result = await connection.execute(text("""
-                SELECT conversations.state, conversations.assigned_user_id, customers.chat_id,
+                SELECT conversations.state, conversations.assigned_user_id, conversations.inactivity_notice_id, customers.chat_id,
                     tenants.openwa_session_id, tenants.openwa_number_verified, messages.sender_type, messages.sender_id, messages.content
                 FROM nexus_atende.conversations AS conversations
                 JOIN nexus_atende.customers AS customers
@@ -59,7 +59,7 @@ class OutgoingMessageRepository:
             """), {"tenant_id": tenant_id, "conversation_id": work.conversation_id, "message_id": work.message_id})
             row = result.mappings().one_or_none()
             reservation = await connection.execute(text("""
-                SELECT allow_waiting, openwa_session_id FROM nexus_atende.work_items WHERE tenant_id = :tenant_id AND id = :id
+                SELECT allow_waiting, openwa_session_id, inactivity_notice FROM nexus_atende.work_items WHERE tenant_id = :tenant_id AND id = :id
                     AND status = 'processing' AND attempts = :attempts FOR UPDATE
             """), {"tenant_id": tenant_id, "id": work.id, "attempts": work.attempts})
             active = reservation.one_or_none()
@@ -67,9 +67,12 @@ class OutgoingMessageRepository:
                 return
             status: WorkStatus = "cancelled"
             retry_after = 30
-            if row and (row["sender_type"] == "bot" and row["state"] == ("waiting" if active.allow_waiting else "bot")
+            if row and (active.inactivity_notice and row["state"] in {"bot", "assigned"}
+                        and row["inactivity_notice_id"] == work.message_id
+                        or not active.inactivity_notice and (
+                        row["sender_type"] == "bot" and row["state"] == ("waiting" if active.allow_waiting else "bot")
                         or row["sender_type"] == "operator" and row["state"] == "assigned"
-                        and row["assigned_user_id"] == row["sender_id"]):
+                        and row["assigned_user_id"] == row["sender_id"])):
                 session_id = active.openwa_session_id
                 status = "failed"
                 if session_id and session_id == row["openwa_session_id"] and not row["openwa_number_verified"]:
@@ -79,14 +82,19 @@ class OutgoingMessageRepository:
                     status = dispatch.status
                     if dispatch.retry_after is not None:
                         retry_after = dispatch.retry_after
-                    if dispatch.provider_id:
+                    if status == "sent" and dispatch.provider_id:
                         await connection.execute(text("""
                             UPDATE nexus_atende.messages SET openwa_session_id = :session_id, openwa_message_id = :provider_id
                             WHERE tenant_id = :tenant_id AND id = :message_id
                         """), {"tenant_id": tenant_id, "message_id": work.message_id,
                                 "session_id": session_id, "provider_id": dispatch.provider_id})
                         await connection.execute(text("""
-                            UPDATE nexus_atende.conversations SET last_interaction = greatest(last_interaction, now())
+                            UPDATE nexus_atende.conversations SET last_interaction = greatest(last_interaction, clock_timestamp()),
+                                inactivity_due_at = CASE
+                                    WHEN :notice THEN clock_timestamp() + interval '5 minutes'
+                                    WHEN state IN ('bot', 'assigned') AND inactivity_notice_id IS NULL THEN
+                                        coalesce(inactivity_due_at, clock_timestamp() + interval '30 minutes')
+                                    ELSE inactivity_due_at END
                             WHERE tenant_id = :tenant_id AND id = :conversation_id
-                        """), {"tenant_id": tenant_id, "conversation_id": work.conversation_id})
+                        """), {"tenant_id": tenant_id, "conversation_id": work.conversation_id, "notice": active.inactivity_notice})
             await finish(connection, tenant_id, work.id, status, retry_after=retry_after)

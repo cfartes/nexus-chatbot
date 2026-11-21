@@ -39,7 +39,7 @@ class OpenWAWebhook:
         except ValidationError:
             raise InvalidEvent from None
         content = event.data.body
-        if event.data.from_me or event.data.is_group or event.data.has_media or not content or not content.strip():
+        if event.data.from_me or event.data.is_group or (not event.data.has_media and (not content or not content.strip())):
             return
         chat_id = event.data.sender
         if not fullmatch(r"[0-9]{5,30}@(c\.us|s\.whatsapp\.net|lid)", chat_id):
@@ -47,6 +47,8 @@ class OpenWAWebhook:
         if chat_id.endswith("@s.whatsapp.net"):
             chat_id = chat_id.removesuffix("@s.whatsapp.net") + "@c.us"
         await self._messages.save(tenant_id, IncomingText(
-            session_id=event.session_id, message_id=event.data.id, chat_id=chat_id, content=content,
+            session_id=event.session_id, message_id=event.data.id, chat_id=chat_id,
+            content=(content if not event.data.has_media else "[Mensagem com anexo]") or "",
             display_name=event.data.display_name.strip() or None if event.data.display_name else None,
-        ), bot_enabled=await self._integrations.ai_enabled(tenant_id))
+        ), bot_enabled=not event.data.has_media and await self._integrations.ai_enabled(tenant_id),
+            activity_only=event.data.has_media)

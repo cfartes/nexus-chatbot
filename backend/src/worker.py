@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from src.repositories.auth import AuthRepository
 from src.repositories.bot import BotRepository
+from src.repositories.conversations import ConversationRepository
 from src.repositories.database import verify_runtime_access
 from src.repositories.integrations import IntegrationRepository
 from src.repositories.knowledge import KnowledgeRepository
@@ -32,6 +33,8 @@ class Worker:
         self._webhook_secret = tenant_webhook_secret(credentials[0], tenant_id, credentials[1]) if credentials else None
         self._work = WorkRepository(engine)
         self._outgoing = OutgoingMessageRepository(engine)
+        self._conversations = ConversationRepository(engine)
+        self._next_inactivity = 0.0
         self._bot = BotService(BotRepository(engine), KnowledgeRepository(engine), self._integrations)
 
     async def sync_webhook(self) -> int:
@@ -78,8 +81,12 @@ class Worker:
     async def run_once(self) -> bool:
         resend = await self._integrations.resend(self._tenant_id)
         openwa = await self._integrations.openwa(self._tenant_id)
+        whatsapp_ready = bool(openwa and not openwa.retry_after())
+        if monotonic() >= self._next_inactivity:
+            await self._conversations.process_inactivity(self._tenant_id, can_notify=whatsapp_ready)
+            self._next_inactivity = monotonic() + 5
         work = await self._work.claim(self._tenant_id, bool(resend and resend.notifications_enabled),
-                                      bool(openwa and not openwa.retry_after()), direct_email_enabled=resend is not None)
+                                      whatsapp_ready, direct_email_enabled=resend is not None)
         if work is None:
             return False
         if work.kind == "rag":

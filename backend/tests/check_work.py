@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.main import app
+from src.repositories.conversations import ConversationRepository
 from src.repositories.database import tenant_transaction
 from src.repositories.events import EventRepository
 from src.repositories.integrations import IntegrationRepository
@@ -110,9 +111,9 @@ async def check() -> None:
                 status, preview = await call("knowledge", "POST", "preview", {"question": "Qual o horário do atendimento humano?"})
             assert status == 200 and json.loads(preview)["status"] == "answered"
 
-            async def receive(message_id: str, content: str, phone: str = "5511888888888") -> None:
+            async def receive(message_id: str, content: str, phone: str = "5511888888888", *, has_media: bool = False) -> None:
                 raw = json.dumps({"event": "message.received", "sessionId": SESSION, "data": {
-                    "id": message_id, "from": f"{phone}@c.us", "fromMe": False, "body": content,
+                    "id": message_id, "from": f"{phone}@c.us", "fromMe": False, "body": content, "hasMedia": has_media,
                 }}).encode()
                 signature = b"sha256=" + digest(SECRET.encode(), raw, "sha256").hex().encode()
                 assert (await request("POST", str(TENANT), raw, ((b"x-openwa-signature", signature),), prefix="webhooks/openwa"))[0] == 204
@@ -517,6 +518,59 @@ async def check() -> None:
                 assert [call.args[2]["text"] for call in delivery.call_args_list] == [
                     "Primeira resposta", "Primeira resposta", "Segunda resposta",
                 ]
+            inbox = ConversationRepository(engine)
+
+            async def deadline() -> tuple[str, UUID | None, float | None]:
+                async with tenant_transaction(engine, TENANT) as connection:
+                    pending = await connection.execute(text("""
+                        SELECT state, inactivity_notice_id, extract(epoch FROM inactivity_due_at - now())::float AS seconds
+                        FROM nexus_atende.conversations WHERE id = :id
+                    """), {"id": conversation})
+                    row = pending.one()
+                    return row.state, row.inactivity_notice_id, row.seconds
+
+            async def expire_deadline() -> None:
+                async with tenant_transaction(engine, TENANT) as connection:
+                    await connection.execute(text("""
+                        UPDATE nexus_atende.conversations SET inactivity_due_at = now() - interval '1 second' WHERE id = :id
+                    """), {"id": conversation})
+
+            state, notice, seconds = await deadline()
+            assert state == "bot" and notice is None and seconds is not None and 1790 < seconds <= 1800
+            await expire_deadline()
+            await inbox.process_inactivity(TENANT, can_notify=False)
+            assert (await deadline())[1] is None
+            await inbox.process_inactivity(TENANT, can_notify=True)
+            state, notice, seconds = await deadline()
+            assert state == "bot" and notice is not None and seconds is None
+            await inbox.process_inactivity(TENANT, can_notify=True)
+            assert await deadline() == (state, notice, seconds)
+            await receive("idle-media", "", has_media=True)
+            assert await deadline() == ("bot", None, None)
+            async with tenant_transaction(engine, TENANT) as connection:
+                assert await connection.scalar(text("SELECT status FROM nexus_atende.work_items WHERE message_id = :id"),
+                                               {"id": notice}) == "cancelled"
+                await connection.execute(text("UPDATE nexus_atende.conversations SET state = 'waiting' WHERE id = :id"),
+                                         {"id": conversation})
+            assert (await request("POST", f"{bot_id}/claim", headers=support, prefix="conversations"))[0] == 204
+            manual = json.dumps({"request_id": str(uuid4()), "text": "Posso ajudar com mais alguma coisa?"}).encode()
+            assert (await request("POST", f"{bot_id}/messages", manual, support, prefix="conversations"))[0] == 202
+            with patch("src.services.openwa.request_json", side_effect=lambda *_args: {"data": {"messageId": str(uuid4())}}) as sent:
+                await drain()
+                await expire_deadline()
+                await inbox.process_inactivity(TENANT, can_notify=True)
+                assert (await deadline())[2] is None
+                await drain()
+                assert "5 minutos" in sent.call_args.args[2]["text"]
+                state, notice, seconds = await deadline()
+                assert state == "assigned" and notice is not None and seconds is not None and 290 < seconds <= 300
+                await inbox.process_inactivity(TENANT, can_notify=True)
+                assert (await deadline())[0] == "assigned"
+                await expire_deadline()
+                await inbox.process_inactivity(TENANT, can_notify=False)
+            assert await deadline() == ("closed", None, None)
+            await receive("idle-open-again", "Olá")
+            assert await deadline() == ("bot", None, None)
             assert (await call("operators", "DELETE", member["id"]))[0] == 204
             assert (await request("GET", "me", headers=third))[0] == 401
             assert member["id"].encode() not in (await call("operators", "GET", ""))[1]

@@ -1,9 +1,10 @@
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from src.repositories.database import tenant_transaction
+from src.repositories.work import enqueue
 from src.schemas.auth import Operator
 from src.schemas.conversations import ConversationSummary, HistoryMessage, Queue, QueueCounts, TransferNotice
 
@@ -11,6 +12,35 @@ WAITING_SCOPE = """(:admin OR conversations.department IS NULL OR EXISTS (
     SELECT 1 FROM nexus_atende.users WHERE tenant_id = :tenant_id AND id = :actor_id
         AND department = conversations.department
 ))"""
+
+INACTIVITY_NOTICE = (
+    "Estamos aguardando seu retorno. Se precisar de mais ajuda, responda a esta mensagem. "
+    "Sem resposta, encerraremos o atendimento em 5 minutos."
+)
+
+
+async def _close_locked(connection: AsyncConnection, tenant_id: UUID, conversation_id: UUID) -> bool:
+    values = {"tenant_id": tenant_id, "id": conversation_id}
+    sending = await connection.scalar(text("""
+        SELECT 1 FROM nexus_atende.work_items
+        WHERE tenant_id = :tenant_id AND conversation_id = :id AND kind = 'whatsapp'
+            AND NOT inactivity_notice AND status IN ('pending', 'processing') LIMIT 1
+    """), values)
+    if sending is not None:
+        return False
+    await connection.execute(text("""
+        UPDATE nexus_atende.conversations
+        SET state = 'closed', assigned_user_id = NULL, opening_pending = true,
+            opening_question = NULL, origin_slug = NULL, department = NULL, awaiting_department = false,
+            inactivity_due_at = NULL, inactivity_notice_id = NULL
+        WHERE tenant_id = :tenant_id AND id = :id
+    """), values)
+    await connection.execute(text("""
+        UPDATE nexus_atende.work_items SET status = 'cancelled'
+        WHERE tenant_id = :tenant_id AND conversation_id = :id AND status IN ('pending', 'processing')
+            AND (kind = 'rag' OR inactivity_notice OR (kind = 'notify' AND status = 'pending'))
+    """), values)
+    return True
 
 
 class ConversationRepository:
@@ -123,25 +153,41 @@ class ConversationRepository:
             """), values)
             if current is None:
                 return False
-            sending = await connection.scalar(text("""
-                SELECT 1 FROM nexus_atende.work_items
-                WHERE tenant_id = :tenant_id AND conversation_id = :id AND kind = 'whatsapp'
-                    AND status IN ('pending', 'processing') LIMIT 1
-            """), values)
-            if sending is not None:
-                return False
-            await connection.execute(text("""
-                UPDATE nexus_atende.conversations
-                SET state = 'closed', assigned_user_id = NULL, opening_pending = true,
-                    opening_question = NULL, origin_slug = NULL, department = NULL, awaiting_department = false
-                WHERE tenant_id = :tenant_id AND id = :id
-            """), values)
-            await connection.execute(text("""
-                UPDATE nexus_atende.work_items SET status = 'cancelled'
-                WHERE tenant_id = :tenant_id AND conversation_id = :id
-                    AND (kind = 'rag' AND status IN ('pending', 'processing') OR kind = 'notify' AND status = 'pending')
-            """), values)
-            return True
+            return await _close_locked(connection, actor.tenant_id, conversation_id)
+
+    async def process_inactivity(self, tenant_id: UUID, *, can_notify: bool) -> None:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            due = await connection.execute(text("""
+                SELECT conversation.id, conversation.inactivity_notice_id
+                FROM nexus_atende.conversations AS conversation
+                JOIN nexus_atende.tenants AS tenant ON tenant.id = conversation.tenant_id
+                WHERE conversation.tenant_id = :tenant_id AND tenant.archived_at IS NULL
+                    AND conversation.state IN ('bot', 'assigned')
+                    AND conversation.inactivity_due_at <= now()
+                    AND (conversation.inactivity_notice_id IS NOT NULL
+                         OR (:can_notify AND tenant.openwa_session_id IS NOT NULL AND tenant.openwa_number_verified))
+                    AND NOT EXISTS (
+                        SELECT 1 FROM nexus_atende.work_items AS work
+                        WHERE work.tenant_id = :tenant_id AND work.conversation_id = conversation.id
+                            AND work.kind IN ('whatsapp', 'rag') AND work.status IN ('pending', 'processing')
+                    )
+                ORDER BY conversation.inactivity_due_at, conversation.id LIMIT 20
+                FOR UPDATE OF conversation SKIP LOCKED
+            """), {"tenant_id": tenant_id, "can_notify": can_notify})
+            for row in due:
+                if row.inactivity_notice_id is not None:
+                    await _close_locked(connection, tenant_id, row.id)
+                    continue
+                values = {"tenant_id": tenant_id, "id": row.id}
+                message_id = await connection.scalar(text("""
+                    INSERT INTO nexus_atende.messages (tenant_id, conversation_id, sender_type, content)
+                    VALUES (:tenant_id, :id, 'bot', :content) RETURNING id
+                """), {**values, "content": INACTIVITY_NOTICE})
+                await connection.execute(text("""
+                    UPDATE nexus_atende.conversations SET inactivity_due_at = NULL, inactivity_notice_id = :message_id
+                    WHERE tenant_id = :tenant_id AND id = :id
+                """), {**values, "message_id": message_id})
+                await enqueue(connection, tenant_id, row.id, "whatsapp", message_id, inactivity_notice=True)
 
     async def transfer(self, actor: Operator, conversation_id: UUID, user_id: UUID) -> bool:
         async with tenant_transaction(self._engine, actor.tenant_id) as connection:

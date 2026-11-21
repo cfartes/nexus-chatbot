@@ -12,7 +12,7 @@ class IncomingMessageRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def save(self, tenant_id: UUID, message: IncomingText, *, bot_enabled: bool = False) -> None:
+    async def save(self, tenant_id: UUID, message: IncomingText, *, bot_enabled: bool = False, activity_only: bool = False) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             binding = await connection.scalar(text("""
                 SELECT 1 FROM nexus_atende.tenants WHERE id = :tenant_id AND openwa_session_id = :session_id
@@ -69,10 +69,16 @@ class IncomingMessageRepository:
                     state = "bot" if bot_enabled else "waiting"
                 await connection.execute(text("""
                     UPDATE nexus_atende.conversations
-                    SET last_interaction = greatest(last_interaction, now()), state = :state
+                    SET last_interaction = greatest(last_interaction, now()), state = :state,
+                        inactivity_due_at = NULL, inactivity_notice_id = NULL
                     WHERE tenant_id = :tenant_id AND id = :conversation_id
                 """), {"tenant_id": tenant_id, "conversation_id": conversation_id, "state": state})
-                if state == "bot":
+                await connection.execute(text("""
+                    UPDATE nexus_atende.work_items SET status = 'cancelled'
+                    WHERE tenant_id = :tenant_id AND conversation_id = :conversation_id AND inactivity_notice
+                        AND status IN ('pending', 'processing')
+                """), {"tenant_id": tenant_id, "conversation_id": conversation_id})
+                if state == "bot" and not activity_only:
                     await enqueue(connection, tenant_id, conversation_id, "rag", inserted)
                 elif new_conversation is not None or reopened:
                     await enqueue(connection, tenant_id, conversation_id, "notify")

@@ -94,6 +94,8 @@ Use **Funções** para cadastrar o nome do perfil e vinculá-lo a Comercial, Fin
 
 Os cards em **Atendimento** mostram as contagens completas das filas e funcionam como filtros. O administrador também vê **Todos atribuídos** e **Encerrados**. O [manual do cliente](MANUAL_DO_CLIENTE.pdf) cobre a operação do administrador da empresa e do colaborador.
 
+Após uma resposta enviada pela IA ou pelo atendente, o worker aguarda 30 minutos de inatividade do contato antes de avisar pelo WhatsApp. Se o OpenWA aceitar o aviso e o contato não responder em 5 minutos, o atendimento é encerrado e o histórico é preservado. Uma mensagem do contato cancela o prazo, inclusive quando o evento recebido sinaliza um anexo. A fila humana em espera fica fora da rotina.
+
 O cadastro de **Clientes** do SuperAdmin usa janelas modais com rolagem nos campos e botões visíveis no rodapé. Registra nome, CPF ou CNPJ com máscara, telefone e e-mail de contato. O endereço tem campos separados para CEP, rua, número, bairro, cidade e UF. Ao digitar oito dígitos no CEP, o painel consulta o ViaCEP automaticamente e preenche os dados disponíveis. A exclusão arquiva o cliente e preserva o histórico. Endereços anteriores aparecem no modal enquanto o cadastro estruturado não é preenchido.
 
 O teste da IA distingue uma pergunta sem cobertura de uma base vazia, vetores incompatíveis e erros do provedor. Se as fontes foram importadas com outro modelo de embeddings, reimporte-as para tornar o conteúdo disponível no modelo atual.

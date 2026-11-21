@@ -134,7 +134,8 @@ class OperatorRepository:
             if not active:
                 await connection.execute(text("""
                     WITH released AS (
-                        UPDATE nexus_atende.conversations SET state = 'waiting', assigned_user_id = NULL
+                        UPDATE nexus_atende.conversations SET state = 'waiting', assigned_user_id = NULL,
+                            inactivity_due_at = NULL, inactivity_notice_id = NULL
                         WHERE tenant_id = :tenant_id AND assigned_user_id = :id RETURNING id
                     )
                     INSERT INTO nexus_atende.work_items (tenant_id, conversation_id, kind)
