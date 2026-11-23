@@ -193,3 +193,5 @@ Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.d
 - Se a base não sustentar uma resposta técnica simples, o bot consulta documentação oficial de cache para Chrome e Firefox e pode consultar até três páginas HTTPS autorizadas por empresa. Configure `NEXUS_ATENDE_TECHNICAL_WEB_SOURCES` em `.env.production` como JSON, por exemplo `{"00000000-0000-0000-0000-000000000001":["https://docs.example.com/ajuda"]}`. Cadastre apenas páginas públicas de documentação oficial. O bot cita as fontes consultadas. Dúvidas sem resposta seguem para a fila do setor identificado, com alerta ao e-mail cadastrado pela empresa.
 
 - A primeira mensagem com uma solicitação segue direto para resposta ou encaminhamento. O bot aproveita o nome quando ele vem em uma apresentação explícita na mesma mensagem.
+
+- O menu SuperAdmins permite que administradores da plataforma convidem novos SuperAdmins e reenviem convites pendentes. O novo usuário define a senha pelo link e seleciona SuperAdmin no login.

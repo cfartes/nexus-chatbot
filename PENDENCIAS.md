@@ -14,3 +14,5 @@
 - Validar na VPS a apresentação de dois assistentes com nomes diferentes em sessões WhatsApp de empresas distintas.
 
 - Validar na VPS respostas técnicas com documentação pública e os encaminhamentos para as filas da empresa com o e-mail de alerta.
+
+- Validar o primeiro convite real de SuperAdmin pelo Resend na VPS.

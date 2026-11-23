@@ -13,6 +13,7 @@ import { ClientSettings } from './ClientSettings';
 import { TransferNotices } from './TransferNotices';
 import { OperatorSettings } from './OperatorSettings';
 import { FunctionSettings } from './FunctionSettings';
+import { SuperAdminSettings } from './SuperAdminSettings';
 
 const queues: { id: Queue; label: string }[] = [
   { id: 'waiting', label: 'Em espera' }, { id: 'mine', label: 'Meus atendimentos' },
@@ -74,7 +75,7 @@ export function Workspace() {
   const [selected, setSelected] = useState<string>();
   const [focus, setFocus] = useState<string>();
   const [revision, setRevision] = useState(0);
-  const [view, setView] = useState<'inbox' | 'settings' | 'password' | 'clients' | 'functions' | 'operators'>('inbox');
+  const [view, setView] = useState<'inbox' | 'settings' | 'password' | 'clients' | 'functions' | 'operators' | 'superadmins'>('inbox');
   const [error, setError] = useState('');
   const [queueError, setQueueError] = useState('');
   const [connected, setConnected] = useState(false);
@@ -176,6 +177,7 @@ export function Workspace() {
           <button className="underline" onClick={() => setView('operators')}>Colaboradores</button>
         </>}
         {operator.platform_admin && <button className="underline" onClick={() => setView('clients')}>Clientes</button>}
+        {operator.platform_admin && <button className="underline" onClick={() => setView('superadmins')}>SuperAdmins</button>}
         <button className="underline" onClick={() => setView('password')}>Alterar senha</button>
         <a href={manualUrl} target="_blank" rel="noopener" className="underline">Manual do cliente (PDF)</a>
         <TransferNotices key={operator.id} revision={revision} openConversation={openTransfer}
@@ -185,6 +187,7 @@ export function Workspace() {
     </header>
     {error && <p role="alert" className="bg-red-50 px-5 py-2 text-red-800">{error}</p>}
     {view === 'password' ? <PasswordSettings /> : view === 'clients' && operator.platform_admin ? <ClientSettings platformTenant={operator.tenant_id} />
+      : view === 'superadmins' && operator.platform_admin ? <SuperAdminSettings />
       : view === 'functions' && operator.role === 'admin' ? <FunctionSettings />
       : view === 'operators' && operator.role === 'admin' ? <OperatorSettings />
       : view === 'settings' ? <Settings platformAdmin={operator.platform_admin} />

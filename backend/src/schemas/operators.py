@@ -6,9 +6,12 @@ from pydantic import BaseModel, Field, SecretStr
 Department = Literal["comercial", "financeiro", "suporte", "sac"]
 
 
-class OperatorCreate(BaseModel):
+class UserInvite(BaseModel):
     name: str = Field(min_length=1, max_length=100, pattern=r"^[^\x00]+$")
     email: str = Field(min_length=3, max_length=150, pattern=r"^[^\s\x00@]+@[^\s\x00@]+$")
+
+
+class OperatorCreate(UserInvite):
     department: Department = "sac"
     function_id: UUID | None = None
 

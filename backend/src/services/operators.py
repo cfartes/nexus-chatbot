@@ -18,17 +18,18 @@ class OperatorService:
         self._origin = origin
         self._slots = Semaphore(2)
 
-    async def list_operators(self, tenant_id: UUID) -> list[OperatorRecord]:
-        return await self._repository.list(tenant_id)
+    async def list_operators(self, tenant_id: UUID, *, platform: bool = False) -> list[OperatorRecord]:
+        return await self._repository.list(tenant_id, platform=platform)
 
-    async def create(self, tenant_id: UUID, operator: OperatorCreate) -> OperatorRecord | None:
+    async def create(self, tenant_id: UUID, operator: OperatorCreate, *, platform: bool = False) -> OperatorRecord | None:
         name = operator.name.strip()
         if not name:
             raise ValueError("Informe o nome")
         resend, origin = await self.invitation_sender(tenant_id)
         token = f"{tenant_id}.{token_urlsafe(32)}"
         invite_hash = sha256(token.encode()).hexdigest()
-        member = await self._repository.create(tenant_id, operator.model_copy(update={"name": name, "email": operator.email.lower()}), invite_hash)
+        member = await self._repository.create(tenant_id, operator.model_copy(update={"name": name, "email": operator.email.lower()}),
+                                               invite_hash, platform=platform)
         if member:
             await self._send_invitation(member, resend, f"{origin}/convite#{token}", invite_hash)
         return member
@@ -46,11 +47,11 @@ class OperatorService:
             raise IntegrationUnavailable
         return resend, origin
 
-    async def renew(self, tenant_id: UUID, user_id: UUID) -> OperatorRecord | None:
+    async def renew(self, tenant_id: UUID, user_id: UUID, *, platform: bool = False) -> OperatorRecord | None:
         resend, origin = await self.invitation_sender(tenant_id)
         token = f"{tenant_id}.{token_urlsafe(32)}"
         invite_hash = sha256(token.encode()).hexdigest()
-        member = await self._repository.renew(tenant_id, user_id, invite_hash)
+        member = await self._repository.renew(tenant_id, user_id, invite_hash, platform=platform)
         if member:
             await self._send_invitation(member, resend, f"{origin}/convite#{token}", invite_hash)
         return member

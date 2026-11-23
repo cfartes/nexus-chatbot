@@ -4,9 +4,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.exc import IntegrityError
 
-from src.api.routes.auth import administrator, administrator_mutation, check_origin
+from src.api.routes.auth import administrator, administrator_mutation, check_origin, superadministrator, superadministrator_mutation
 from src.schemas.auth import Operator
-from src.schemas.operators import AcceptInvite, FunctionInput, OperatorCreate, OperatorFunction, OperatorRecord, OperatorUpdate
+from src.schemas.operators import AcceptInvite, FunctionInput, OperatorCreate, OperatorFunction, OperatorRecord, OperatorUpdate, UserInvite
 from src.services.integrations import IntegrationUnavailable
 from src.services.operators import OperatorService
 
@@ -20,6 +20,8 @@ def operator_service(request: Request) -> OperatorService:
 
 Reader = Annotated[Operator, Depends(administrator)]
 Writer = Annotated[Operator, Depends(administrator_mutation)]
+PlatformReader = Annotated[Operator, Depends(superadministrator)]
+PlatformWriter = Annotated[Operator, Depends(superadministrator_mutation)]
 Service = Annotated[OperatorService, Depends(operator_service)]
 
 
@@ -74,8 +76,23 @@ async def operators(actor: Reader, service: Service, response: Response) -> list
 
 @router.post("", status_code=201)
 async def create(operator: OperatorCreate, actor: Writer, service: Service) -> OperatorRecord:
+    return await _create(operator, actor, service)
+
+
+@router.get("/superadmins")
+async def superadmins(actor: PlatformReader, service: Service, response: Response) -> list[OperatorRecord]:
+    response.headers["Cache-Control"] = "no-store"
+    return await service.list_operators(actor.tenant_id, platform=True)
+
+
+@router.post("/superadmins", status_code=201)
+async def create_superadmin(content: UserInvite, actor: PlatformWriter, service: Service) -> OperatorRecord:
+    return await _create(OperatorCreate(name=content.name, email=content.email), actor, service, platform=True)
+
+
+async def _create(operator: OperatorCreate, actor: Operator, service: Service, *, platform: bool = False) -> OperatorRecord:
     try:
-        created = await service.create(actor.tenant_id, operator)
+        created = await service.create(actor.tenant_id, operator, platform=platform)
     except IntegrationUnavailable:
         raise HTTPException(503, "Configure o Resend e a origem pública antes de enviar convites") from None
     except ValueError as error:
@@ -87,8 +104,17 @@ async def create(operator: OperatorCreate, actor: Writer, service: Service) -> O
 
 @router.post("/{user_id}/invite")
 async def renew(user_id: UUID, actor: Writer, service: Service) -> OperatorRecord:
+    return await _renew(user_id, actor, service)
+
+
+@router.post("/superadmins/{user_id}/invite")
+async def renew_superadmin(user_id: UUID, actor: PlatformWriter, service: Service) -> OperatorRecord:
+    return await _renew(user_id, actor, service, platform=True)
+
+
+async def _renew(user_id: UUID, actor: Operator, service: Service, *, platform: bool = False) -> OperatorRecord:
     try:
-        renewed = await service.renew(actor.tenant_id, user_id)
+        renewed = await service.renew(actor.tenant_id, user_id, platform=platform)
     except IntegrationUnavailable:
         raise HTTPException(503, "Configure o Resend e a origem pública antes de enviar convites") from None
     if renewed is None:

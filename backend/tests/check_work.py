@@ -481,6 +481,9 @@ async def check() -> None:
                 await pilot_resend.send_test()
             assert pilot_email.call_args.args[2]["to"] == ["support@pilot.test"]
             assert (await request("GET", "", headers=pilot, prefix="clients"))[0] == 403
+            assert (await request("GET", "superadmins", headers=pilot, prefix="operators"))[0] == 403
+            new_admin = {"name": "Nova Administradora", "email": "platform-next@example.test"}
+            assert (await request("POST", "superadmins", json.dumps(new_admin).encode(), pilot, prefix="operators"))[0] == 403
             assert (await request("PUT", "ai", b'{"provider":"openai","model":"test"}', pilot, prefix="integrations"))[0] == 403
             assert (await request("GET", "", headers=pilot, prefix="integrations"))[0] == 403
             assert (await request("PUT", "openwa", b'{"api_key":"different-key"}', pilot, prefix="integrations"))[0] == 403
@@ -505,6 +508,25 @@ async def check() -> None:
             ar = b'{"email":"admin@example.test","password":"test-password-123"}'
             status, _, platform = await request("POST", "login", ar, (origin_header,))
             assert status == 200 and json.loads(platform)["platform_admin"] is True
+            with patch("src.services.resend.request_json", return_value={"id": "platform-invite"}) as invite:
+                status, created_admin = await call("operators", "POST", "superadmins", new_admin)
+            assert status == 201 and json.loads(created_admin)["invite_sent"]
+            created_id = json.loads(created_admin)["id"]
+            original_token = invite.call_args.args[2]["text"].split("#")[-1]
+            assert (await call("operators", "POST", "superadmins", new_admin))[0] == 409
+            assert (await call("operators", "POST", f"{created_id}/invite"))[0] == 404
+            assert created_id not in {row["id"] for row in json.loads((await call("operators", "GET", ""))[1])}
+            assert (await request("POST", f"superadmins/{created_id}/invite", headers=pilot, prefix="operators"))[0] == 403
+            with patch("src.services.resend.request_json", return_value={"id": "renewed-platform-invite"}) as invite:
+                assert (await call("operators", "POST", f"superadmins/{created_id}/invite"))[0] == 200
+            new_token = invite.call_args.args[2]["text"].split("#")[-1]
+            assert (await call("operators", "POST", "accept-invite", {"token": original_token, "password": "test-password-123"}))[0] == 400
+            assert (await call("operators", "POST", "accept-invite", {"token": new_token, "password": "test-password-123"}))[0] == 204
+            platform_credentials = json.dumps({"email": new_admin["email"], "password": "test-password-123"}).encode()
+            status, _, new_session = await request("POST", "login", platform_credentials, (origin_header,))
+            assert status == 200 and json.loads(new_session)["platform_admin"] is True
+            assert any(row["id"] == created_id and not row["invite_pending"]
+                       for row in json.loads((await call("operators", "GET", "superadmins"))[1]))
             assert (await call("clients", "DELETE", str(TENANT)))[0] == 422
             assert (await call("clients", "PUT", client_id, {"name": "Piloto atualizado", "details": {**details, "street": "Rua Nova", "number": "321"}}))[0] == 204
             assert (await call("clients", "DELETE", client_id))[0] == 204
