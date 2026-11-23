@@ -166,7 +166,7 @@ async def check() -> None:
                     if not await worker.run_once():
                         break
 
-            for message_id, content in (("work-ai", "Qual é o expediente?"), ("work-name", "Meu nome é Ana Souza"),
+            for message_id, content in (("work-ai", "Olá!"), ("work-name", "Meu nome é Ana Souza. Qual é o expediente?"),
                                         ("work-follow-up", "E no sábado?"),
                                         ("work-human", "Quero falar com um atendente"), ("work-invalid-category", "9"),
                                         ("work-category", "3")):
@@ -284,13 +284,10 @@ async def check() -> None:
                 await drain()
                 assert whatsapp.call_args.args[2]["text"] == "Como posso ajudar?"
                 await receive("work-new-origin", f"{marker}\nQual é o expediente?", "5511777777777")
-                await drain()
-                assert whatsapp.call_args.args[2]["text"] == "Como posso chamar você?"
-                await receive("work-new-name", "João", "5511777777777")
                 with patch("src.services.openai.request_json", side_effect=[vector, completion]) as ai:
                     await drain()
                 assert "RotaFY: Qual é o expediente?" in str(ai.call_args_list[0].args[2])
-                assert whatsapp.call_args.args[2]["text"] == "Prazer, João!\n\nAtendemos em horário comercial."
+                assert whatsapp.call_args.args[2]["text"] == "Atendemos em horário comercial."
             status, _, sourced = await request("GET", "", headers=admin, prefix="conversations", query=b"queue=bot")
             assert status == 200 and next(row for row in json.loads(sourced) if row["id"] == bot_id)["origin_name"] == "RotaFY"
 
@@ -634,6 +631,25 @@ async def check() -> None:
             assert (await call("operators", "DELETE", member["id"]))[0] == 204
             assert (await request("GET", "me", headers=third))[0] == 401
             assert member["id"].encode() not in (await call("operators", "GET", ""))[1]
+            await receive("first-project", "Olá! Bom dia!\n\nMeu nome é Marina, sou gestora da fábrica.\n"
+                          "Queremos avaliar um projeto de visão computacional e a faixa de investimento.",
+                          "5511766666666")
+            with (patch("src.services.integrations.IntegrationService.ai", return_value=None),
+                  patch("src.services.openwa.request_json", side_effect=lambda *_args: {"data": {"messageId": str(uuid4())}}) as whatsapp,
+                  patch("src.services.resend.request_json", return_value={"id": "email-id"})):
+                await drain()
+            project_replies = [item.args[2]["text"] for item in whatsapp.call_args_list]
+            assert any("Marina!" in reply and "avaliar um projeto" in reply and "ao Comercial" in reply
+                       for reply in project_replies)
+            status, waiting = await call("conversations", "GET", "")
+            assert status == 200
+            routed, = [row for row in json.loads(waiting) if row["customer_name"] == "Marina"]
+            assert routed["department"] == "comercial"
+            async with tenant_transaction(engine, TENANT) as connection:
+                assert await connection.scalar(text("""
+                    SELECT count(*) FROM nexus_atende.work_items
+                    WHERE conversation_id = CAST(:id AS uuid) AND kind = 'notify'
+                """), {"id": routed["id"]}) == 1
     finally:
         await engine.dispose()
 

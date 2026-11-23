@@ -25,7 +25,7 @@ DEPARTMENT_MENU = "Qual é o assunto do atendimento? Responda com o número da o
 )
 TOPICS: tuple[tuple[Department, str], ...] = (
     ("financeiro", r"financeiro|boleto|cobranca|fatura|nota fiscal|pagamento|reembolso|segunda via"),
-    ("comercial", r"comercial|preco|valor|quanto (?:custa|fica)|orcamento|proposta|contrata\w*|planos?|desconto|demonstracao"),
+    ("comercial", r"comercial|preco|valor|quanto (?:custa|fica)|orcamento|proposta|contrata\w*|planos?|desconto|demonstracao|investimento"),
     ("sac", r"sac|reclam\w*|insatisfa\w*|ouvidoria|sugestao"),
     ("suporte", r"suporte|tecnic\w*|erro|falha|trav\w*|cache|cookies?|navegador|login|configur\w*|instal\w*"),
 )
@@ -62,31 +62,37 @@ class BotService:
                 context.origin_name = await self._knowledge.origin(tenant_id, marker[1].lower())
                 if context.origin_name is not None:
                     context.origin_slug = marker[1].lower()
-            if context.origin_slug is None:
-                prefix = _welcome(context) or "Olá!"
-                if context.name:
-                    greeting = "Bom dia" if 5 <= context.local_hour < 12 else "Boa tarde" if 12 <= context.local_hour < 18 else "Boa noite"
-                    prefix += f"\n\n{greeting}, {context.name}!"
-            opening = OpeningUpdate(origin_slug=context.origin_slug)
+            name, question = _opening_name(question)
+            opening = OpeningUpdate(origin_slug=context.origin_slug, customer_name=name)
+            context.name = name or context.name
             if _generic(question):
                 question = ""
-            if not context.name and not _human_requested(question):
-                opening.pending_question = question
+            if context.origin_slug is None:
+                greeting = "Bom dia" if 5 <= context.local_hour < 12 else "Boa tarde" if 12 <= context.local_hour < 18 else "Boa noite"
+                greeting = f"{greeting}, {context.name}!" if context.name else f"{greeting}!"
+                if question:
+                    prefix = _welcome(context.model_copy(update={"welcome_message": greeting}))
+                else:
+                    prefix = _welcome(context) or "Olá!"
+                    if context.name:
+                        prefix += f"\n\n{greeting}"
+            if not context.name and not question:
+                opening.pending_question = ""
                 await self._repository.resolve(tenant_id, work, _prefixed(prefix, ASK_NAME), TECHNICAL, None, opening)
                 return
         elif context.opening_question is not None:
+            stated_name, request = _opening_name(question)
             if _human_requested(question):
                 opening = OpeningUpdate(origin_slug=context.origin_slug)
-            elif (name := _customer_name(question)) is None:
-                if not context.opening_question and not _generic(question):
-                    opening = OpeningUpdate(origin_slug=context.origin_slug, pending_question=question)
+            elif (name := stated_name or _customer_name(question)) is None and _generic(question):
                 await self._repository.resolve(tenant_id, work, ASK_NAME, TECHNICAL, None, opening)
                 return
             else:
-                context.name = name
                 opening = OpeningUpdate(origin_slug=context.origin_slug, customer_name=name)
-                prefix = f"Prazer, {name}!"
-                question = context.opening_question
+                if name:
+                    context.name = name
+                    prefix = f"Prazer, {name}!"
+                question = "\n".join(filter(None, (context.opening_question, request if stated_name or not name else "")))
 
         if context.awaiting_department:
             choice = fullmatch(r"([1-4])[.)]?", question)
@@ -106,7 +112,7 @@ class BotService:
         answer = _prefixed(prefix, result.message) if result.status in {"answered", "clarify"} else None
         fallback = result.message
         if result.status == "unavailable":
-            fallback = HANDOFF_MESSAGES[result.department] if result.department else TECHNICAL
+            fallback = _handoff_message(result.department, question) if result.department else TECHNICAL
         ask_department = result.status == "handoff" and result.department is None
         if ask_department:
             answer = _prefixed(prefix, result.message)
@@ -126,7 +132,7 @@ class BotService:
     async def _answer(self, tenant_id: UUID, context: BotContext) -> tuple[PreviewResult, str | None]:
         welcome = f"{context.welcome_message}\n\n" if not context.recent and context.welcome_message else ""
         department = _department(context)
-        handoff_message = welcome + (HANDOFF_MESSAGES[department] if department else DEPARTMENT_MENU)
+        handoff_message = welcome + (_handoff_message(department, context.question) if department else DEPARTMENT_MENU)
         if _human_requested(context.question):
             return PreviewResult(status="handoff", message=handoff_message, sources=[], department=department,
                                  reason="O cliente pediu atendimento humano."), None
@@ -226,6 +232,14 @@ def _department(context: BotContext) -> Department | None:
     return None
 
 
+def _handoff_message(department: Department, question: str) -> str:
+    normalized = _normalized(question)
+    if department == "comercial" and search(r"\bprojeto\b", normalized):
+        budget = " e entender a faixa de investimento" if search(r"\binvestimento\b", normalized) else ""
+        return f"Entendi que você quer avaliar um projeto{budget}. " + HANDOFF_MESSAGES[department]
+    return HANDOFF_MESSAGES[department]
+
+
 def _human_requested(value: str) -> bool:
     return bool(search(
         r"^(um |uma )?(atendente|operador|atendimento humano)[!. ]*$|\b(quero (um |uma )?(atendente|operador|atendimento humano)|falar com (um |uma |o |a )?(atendente|operador|pessoa|humano|suporte|comercial|financeiro|sac))\b",
@@ -247,6 +261,15 @@ def _customer_name(value: str) -> str | None:
     if search(r"\b(quero|preciso|pode|gostaria|qual|como|onde|quando|atendente|ajuda|suporte)\b", _normalized(name)):
         return None
     return name if fullmatch(r"[^\W\d_]+(?:[ '\-’][^\W\d_]+){0,7}", name) else None
+
+
+def _opening_name(question: str) -> tuple[str | None, str]:
+    introduction = search(r"(?:^|(?<=[.!?\n]))[ \t\n]*(?:meu nome [ée]|me chamo)\s+([^,.!?;:\r\n]+)",
+                          question, IGNORECASE)
+    if introduction is None or (name := _customer_name(introduction[1])) is None:
+        return None, question
+    remaining = question[:introduction.start()] + "\n" + question[introduction.end():].lstrip(" ,.!?;:\r\n")
+    return name, remaining.strip()
 
 
 def _prefixed(prefix: str, message: str) -> str:
