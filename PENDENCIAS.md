@@ -6,3 +6,5 @@ O responsável pelo piloto confirmou em 23/11/2026 a conclusão das validações
 
 - Automatizar a atualização das fontes da base de conhecimento importadas por URL.
 - Definir o prazo de retenção de conversas e perfis e implementar a regra correspondente.
+
+- Validar na VPS a abertura e a consulta de chamados pelo WhatsApp real.

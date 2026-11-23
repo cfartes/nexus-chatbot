@@ -8,6 +8,7 @@ export interface Conversation {
   id: string; chat_id: string; customer_name: string | null; state: 'waiting' | 'bot' | 'assigned' | 'closed';
   assigned_user_id: string | null; last_interaction: string; origin_name: string | null;
   department: Department | null;
+  support_ticket?: { id: string; product: string | null; details: string; closed_at: string | null } | null;
 }
 export interface Message {
   id: string; sender_type: 'customer' | 'bot' | 'operator'; sender_id: string | null;

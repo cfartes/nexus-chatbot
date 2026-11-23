@@ -1,3 +1,4 @@
+from re import IGNORECASE, fullmatch
 from uuid import UUID
 
 from sqlalchemy import text
@@ -30,6 +31,10 @@ class IncomingMessageRepository:
             """), {"tenant_id": tenant_id, "session_id": message.session_id, "message_id": message.message_id})
             if duplicate is not None:
                 return
+            status_request = fullmatch(
+                r"status do chamado\s+([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})[.!]?",
+                message.content.strip(), IGNORECASE,
+            ) if not activity_only else None
 
             await connection.execute(text("""
                 INSERT INTO nexus_atende.customers (tenant_id, chat_id) VALUES (:tenant_id, :chat_id)
@@ -42,7 +47,8 @@ class IncomingMessageRepository:
                 INSERT INTO nexus_atende.conversations (tenant_id, customer_id, state, opening_pending)
                 VALUES (:tenant_id, :customer_id, :state, true)
                 ON CONFLICT (tenant_id, customer_id) DO NOTHING RETURNING id
-            """), {"tenant_id": tenant_id, "customer_id": customer_id, "state": "bot" if bot_enabled else "waiting"})
+            """), {"tenant_id": tenant_id, "customer_id": customer_id,
+                   "state": "closed" if status_request else "bot" if bot_enabled else "waiting"})
             result = await connection.execute(text("""
                 SELECT id, state FROM nexus_atende.conversations
                 WHERE tenant_id = :tenant_id AND customer_id = :customer_id FOR UPDATE
@@ -59,6 +65,23 @@ class IncomingMessageRepository:
                 "message_id": message.message_id, "content": message.content,
             })
             if inserted is not None:
+                if status_request:
+                    protocol = UUID(status_request[1])
+                    status = await connection.scalar(text("""
+                        SELECT CASE WHEN closed_at IS NOT NULL THEN 'Encerrado'
+                            WHEN CAST(:state AS text) = 'assigned' THEN 'Em atendimento'
+                            ELSE 'Aguardando atendimento' END
+                        FROM nexus_atende.support_tickets
+                        WHERE tenant_id = :tenant_id AND conversation_id = :conversation_id AND id = :protocol
+                    """), {"tenant_id": tenant_id, "conversation_id": conversation_id, "protocol": protocol, "state": state})
+                    content = (f"Chamado {protocol}\nStatus: {status}." if status
+                               else "Não encontrei esse protocolo para este contato. Confira o número e tente novamente.")
+                    reply_id: UUID = await connection.scalar(text("""
+                        INSERT INTO nexus_atende.messages (tenant_id, conversation_id, sender_type, content)
+                        VALUES (:tenant_id, :conversation_id, 'bot', :content) RETURNING id
+                    """), {"tenant_id": tenant_id, "conversation_id": conversation_id, "content": content})
+                    await enqueue(connection, tenant_id, conversation_id, "whatsapp", reply_id, support_status_reply=True)
+                    return
                 await connection.execute(text("""
                     UPDATE nexus_atende.customers
                     SET last_seen_at = greatest(last_seen_at, now()), total_interactions = total_interactions + 1

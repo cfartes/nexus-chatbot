@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from src.repositories.database import tenant_transaction
 from src.repositories.work import enqueue, finish
 from src.schemas.auth import Operator
+from src.schemas.conversations import SupportTicketInput
 from src.schemas.knowledge import BotContext, OpeningUpdate
 from src.schemas.operators import Department
 from src.schemas.work import WorkItem
@@ -71,7 +72,7 @@ class BotRepository:
 
     async def resolve(self, tenant_id: UUID, work: WorkItem, answer: str | None, fallback: str, summary: str | None,
                       opening: OpeningUpdate | None = None, *, ask_department: bool = False,
-                      department: Department | None = None) -> None:
+                      department: Department | None = None, ticket: SupportTicketInput | None = None) -> None:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             values = {"tenant_id": tenant_id, "id": work.conversation_id}
             state = await connection.scalar(text("""
@@ -108,6 +109,20 @@ class BotRepository:
                         AND (customers.tenant_id, customers.id) = (conversations.tenant_id, conversations.customer_id)
                 """), {**values, "summary": summary, "customer_name": customer_name})
             if answer is None:
+                if ticket is not None and department == "suporte":
+                    protocol = await connection.scalar(text("""
+                        INSERT INTO nexus_atende.support_tickets (tenant_id, conversation_id, product, details)
+                        VALUES (:tenant_id, :id, :product, :details)
+                        ON CONFLICT (tenant_id, conversation_id) WHERE closed_at IS NULL DO NOTHING
+                        RETURNING id
+                    """), {**values, "product": ticket.product, "details": ticket.details})
+                    if protocol is None:
+                        protocol = await connection.scalar(text("""
+                            SELECT id FROM nexus_atende.support_tickets
+                            WHERE tenant_id = :tenant_id AND conversation_id = :id AND closed_at IS NULL
+                        """), values)
+                    instructions = f"\n\nProtocolo: {protocol}\nPara consultar, envie: status do chamado {protocol}"
+                    fallback = fallback[:4096 - len(instructions)] + instructions
                 await _handoff(connection, tenant_id, work.conversation_id)
                 await connection.execute(text("""
                     UPDATE nexus_atende.work_items SET status = 'cancelled'

@@ -59,7 +59,8 @@ class OutgoingMessageRepository:
             """), {"tenant_id": tenant_id, "conversation_id": work.conversation_id, "message_id": work.message_id})
             row = result.mappings().one_or_none()
             reservation = await connection.execute(text("""
-                SELECT allow_waiting, openwa_session_id, inactivity_notice FROM nexus_atende.work_items WHERE tenant_id = :tenant_id AND id = :id
+                SELECT allow_waiting, openwa_session_id, inactivity_notice, support_status_reply
+                FROM nexus_atende.work_items WHERE tenant_id = :tenant_id AND id = :id
                     AND status = 'processing' AND attempts = :attempts FOR UPDATE
             """), {"tenant_id": tenant_id, "id": work.id, "attempts": work.attempts})
             active = reservation.one_or_none()
@@ -70,7 +71,8 @@ class OutgoingMessageRepository:
             if row and (active.inactivity_notice and row["state"] in {"bot", "assigned"}
                         and row["inactivity_notice_id"] == work.message_id
                         or not active.inactivity_notice and (
-                        row["sender_type"] == "bot" and row["state"] == ("waiting" if active.allow_waiting else "bot")
+                        row["sender_type"] == "bot" and (active.support_status_reply
+                          or row["state"] == ("waiting" if active.allow_waiting else "bot"))
                         or row["sender_type"] == "operator" and row["state"] == "assigned"
                         and row["assigned_user_id"] == row["sender_id"])):
                 session_id = active.openwa_session_id
@@ -88,6 +90,7 @@ class OutgoingMessageRepository:
                             WHERE tenant_id = :tenant_id AND id = :message_id
                         """), {"tenant_id": tenant_id, "message_id": work.message_id,
                                 "session_id": session_id, "provider_id": dispatch.provider_id})
+                    if status == "sent" and dispatch.provider_id and not active.support_status_reply:
                         await connection.execute(text("""
                             UPDATE nexus_atende.conversations SET last_interaction = greatest(last_interaction, clock_timestamp()),
                                 inactivity_due_at = CASE

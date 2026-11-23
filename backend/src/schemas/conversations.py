@@ -18,6 +18,16 @@ class QueueCounts(BaseModel):
     closed: int | None
 
 
+class SupportTicketInput(BaseModel):
+    product: str | None
+    details: str
+
+
+class SupportTicket(SupportTicketInput):
+    id: UUID
+    closed_at: datetime | None
+
+
 class ConversationSummary(BaseModel):
     id: UUID
     chat_id: str
@@ -27,6 +37,7 @@ class ConversationSummary(BaseModel):
     last_interaction: datetime
     origin_name: str | None = None
     department: Department | None = None
+    support_ticket: SupportTicket | None = None
 
 
 class HistoryMessage(BaseModel):

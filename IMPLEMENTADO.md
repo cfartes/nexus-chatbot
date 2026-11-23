@@ -197,3 +197,5 @@ Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.d
 - O menu SuperAdmins permite que administradores da plataforma convidem novos SuperAdmins e reenviem convites pendentes. O novo usuário define a senha pelo link e seleciona SuperAdmin no login.
 
 - Em Configurações → Base de conhecimento, o administrador pode baixar cada fonte da própria empresa. Novos uploads preservam os bytes originais. Fontes antigas, textos e páginas web fornecem o texto indexado em TXT.
+
+- Ao transferir para Suporte, a IA abre um chamado com protocolo e trechos do pedido. A equipe vê a ficha na conversa. O cliente consulta pelo mesmo WhatsApp com `status do chamado <protocolo>` e o encerramento da conversa é refletido no chamado.

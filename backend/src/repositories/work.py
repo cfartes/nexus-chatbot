@@ -10,15 +10,18 @@ from src.schemas.work import EmailNotice, WorkItem, WorkKind, WorkStatus
 async def enqueue(
     connection: AsyncConnection, tenant_id: UUID, conversation_id: UUID,
     kind: WorkKind, message_id: UUID | None = None, *, allow_waiting: bool = False, inactivity_notice: bool = False,
+    support_status_reply: bool = False,
 ) -> None:
     await connection.execute(text("""
-        INSERT INTO nexus_atende.work_items (tenant_id, conversation_id, kind, message_id, allow_waiting, inactivity_notice, openwa_session_id, created_at)
-        VALUES (:tenant_id, :conversation_id, :kind, :message_id, :allow_waiting, :inactivity_notice,
+        INSERT INTO nexus_atende.work_items (tenant_id, conversation_id, kind, message_id, allow_waiting,
+            inactivity_notice, support_status_reply, openwa_session_id, created_at)
+        VALUES (:tenant_id, :conversation_id, :kind, :message_id, :allow_waiting, :inactivity_notice, :support_status_reply,
             CASE WHEN :kind = 'whatsapp' THEN (
                 SELECT openwa_session_id FROM nexus_atende.tenants WHERE id = :tenant_id
             ) ELSE NULL END, clock_timestamp())
     """), {"tenant_id": tenant_id, "conversation_id": conversation_id, "kind": kind,
-            "message_id": message_id, "allow_waiting": allow_waiting, "inactivity_notice": inactivity_notice})
+            "message_id": message_id, "allow_waiting": allow_waiting, "inactivity_notice": inactivity_notice,
+            "support_status_reply": support_status_reply})
 
 
 async def finish(

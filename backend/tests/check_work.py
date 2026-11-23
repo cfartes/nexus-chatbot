@@ -221,6 +221,9 @@ async def check() -> None:
             assert json.loads(body)[0]["customer_name"] == "Ana Souza"
             bot_id = json.loads(body)[0]["id"]
             assert json.loads(body)[0]["department"] == "suporte"
+            ticket = json.loads(body)[0]["support_ticket"]
+            protocol = ticket["id"]
+            assert ticket["closed_at"] is None and "E no sábado?" in ticket["details"]
             assert json.loads((await call("conversations", "GET", "", admin_only=False))[1]) == []
             assert (await call("conversations", "POST", f"{bot_id}/claim", admin_only=False))[0] == 409
             second_id = next(user["id"] for user in target if user["name"] == "Segundo")
@@ -238,6 +241,14 @@ async def check() -> None:
             support_counts = json.loads((await request("GET", "counts", headers=support, prefix="conversations"))[2])
             assert support_counts["waiting"] == 1 and support_counts["closed"] is None
             assert json.loads((await call("conversations", "GET", "counts", admin_only=False))[1])["waiting"] == 0
+            with patch("src.services.openwa.request_json", side_effect=lambda *_args: {"data": {"messageId": str(uuid4())}}) as whatsapp:
+                await receive("status-waiting", f"status do chamado {protocol}")
+                await drain()
+                assert "Status: Aguardando atendimento." in whatsapp.call_args.args[2]["text"]
+                assert (await request("POST", f"{bot_id}/claim", headers=support, prefix="conversations"))[0] == 204
+                await receive("status-assigned", f"status do chamado {protocol}")
+                await drain()
+                assert "Status: Em atendimento." in whatsapp.call_args.args[2]["text"]
             async with EventRepository(engine).listen(TENANT) as changed:
                 assert (await call("conversations", "PUT", f"{bot_id}/bot", {"active": True}))[0] == 204
                 await asyncio.wait_for(changed.wait(), timeout=2)
@@ -270,6 +281,9 @@ async def check() -> None:
                 await drain()
                 assert (await call("conversations", "POST", f"{bot_id}/close", admin_only=False))[0] == 409
                 assert (await call("conversations", "POST", f"{bot_id}/close"))[0] == 204
+                await receive("status-closed", f"status do chamado {protocol}")
+                await drain()
+                assert "Status: Encerrado." in whatsapp.call_args.args[2]["text"]
                 await receive("work-reopen", "Olá, tudo bem?")
                 async with tenant_transaction(engine, TENANT) as connection:
                     await connection.execute(text("""
@@ -687,6 +701,10 @@ async def check() -> None:
                     SELECT count(*) FROM nexus_atende.work_items
                     WHERE conversation_id = CAST(:id AS uuid) AND kind = 'notify'
                 """), {"id": routed["id"]}) == 1
+            await receive("foreign-status", f"status do chamado {protocol}", "5511755555555")
+            with patch("src.services.openwa.request_json", side_effect=lambda *_args: {"data": {"messageId": str(uuid4())}}) as whatsapp:
+                await drain()
+            assert "Não encontrei esse protocolo para este contato." in whatsapp.call_args.args[2]["text"]
     finally:
         await engine.dispose()
 

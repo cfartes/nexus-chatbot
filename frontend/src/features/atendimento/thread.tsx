@@ -100,6 +100,12 @@ export function Thread({ conversation, operator, revision, onChange, onClaim }: 
           <Button type="submit" label="Transferir" isDisabled={busy} />
         </form>}
       </section>
+      {conversation.support_ticket && <details className="basis-full rounded-lg bg-slate-50 p-3 text-sm">
+        <summary className="cursor-pointer font-medium">Chamado de suporte · {conversation.support_ticket.closed_at ? 'Encerrado' : conversation.state === 'assigned' ? 'Em atendimento' : 'Aguardando atendimento'}</summary>
+        <p className="mt-2 wrap-anywhere text-slate-600">Protocolo: {conversation.support_ticket.id}</p>
+        {conversation.support_ticket.product && <p className="wrap-anywhere text-slate-600">Produto: {conversation.support_ticket.product}</p>}
+        <p className="mt-2 whitespace-pre-wrap wrap-anywhere">{conversation.support_ticket.details}</p>
+      </details>}
     </header>
     <section ref={scroller} onScroll={event => { const panel = event.currentTarget; followLatest.current = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60; }} className="min-h-72 overflow-y-auto bg-slate-50 p-4 md:max-h-[72vh]" aria-label="Histórico de mensagens">
       {latest.length === 50 && !end && <Button label="Mensagens anteriores" isDisabled={busy} onClick={() => void loadOlder()} />}

@@ -7,6 +7,7 @@ from pydantic import HttpUrl
 
 from src.repositories.bot import BotRepository
 from src.repositories.knowledge import KnowledgeRepository
+from src.schemas.conversations import SupportTicketInput
 from src.schemas.knowledge import BotContext, OpeningUpdate, PreviewResult
 from src.schemas.operators import Department
 from src.schemas.work import WorkItem
@@ -99,7 +100,8 @@ class BotService:
             if choice:
                 department, label = DEPARTMENTS[int(choice[1]) - 1]
                 await self._repository.resolve(tenant_id, work, None, f"Vou encaminhar sua conversa para {label}.", None,
-                                               opening, department=department)
+                                               opening, department=department,
+                                               ticket=_support_ticket(context, "") if department == "suporte" else None)
             else:
                 await self._repository.resolve(tenant_id, work, DEPARTMENT_MENU, TECHNICAL, None, opening)
             return
@@ -117,7 +119,8 @@ class BotService:
         if ask_department:
             answer = _prefixed(prefix, result.message)
         await self._repository.resolve(tenant_id, work, answer, _prefixed(prefix, fallback), summary, opening,
-                                       ask_department=ask_department, department=result.department)
+                                       ask_department=ask_department, department=result.department,
+                                       ticket=_support_ticket(context, question) if result.department == "suporte" else None)
 
     async def preview(self, tenant_id: UUID, question: str) -> PreviewResult:
         profile = await self._knowledge.welcome(tenant_id)
@@ -219,6 +222,14 @@ class BotService:
 
 def _normalized(value: str) -> str:
     return normalize("NFKD", value.casefold()).encode("ascii", "ignore").decode()
+
+
+def _support_ticket(context: BotContext, question: str) -> SupportTicketInput:
+    details = [line.removeprefix("customer: ") for line in context.recent if line.startswith("customer: ")]
+    excerpts = list(dict.fromkeys(line for line in [*details, question]
+                                  if line and not _generic(line) and not fullmatch(r"[0-9]+[.)]?", line.strip())))
+    return SupportTicketInput(product=context.origin_name, details="\n\n".join(excerpts[-3:])[-3000:]
+                              or "O contato solicitou atendimento de Suporte.")
 
 
 def _department(context: BotContext) -> Department | None:

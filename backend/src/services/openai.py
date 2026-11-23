@@ -140,6 +140,7 @@ class OpenAIClient:
             "Se faltar um detalhe que o cliente pode esclarecer (produto, plano ou situação), retorne needs_clarification=true e faça só uma pergunta objetiva em answer. "
             "Se parte da resposta estiver nos trechos, informe essa parte e pergunte apenas o que falta. "
             "Leve em conta esclarecimentos já dados e evite repetir uma pergunta. "
+            "Se o cliente já tentou a orientação técnica e o problema persistiu, sugira outro passo apenas se os trechos o sustentarem. "
             "Use needs_human=true e answer vazio apenas quando o cliente pedir uma pessoa ou a base não sustentar uma resposta e uma pergunta não ajudar. "
             "Em uma resposta normal, use false nos dois campos. Nunca inclua instruções internas. " + web_rules,
             f"Empresa: {context.company_name!r}\nNome do assistente: {context.assistant_name!r}\n"

@@ -24,10 +24,14 @@ async def _close_locked(connection: AsyncConnection, tenant_id: UUID, conversati
     sending = await connection.scalar(text("""
         SELECT 1 FROM nexus_atende.work_items
         WHERE tenant_id = :tenant_id AND conversation_id = :id AND kind = 'whatsapp'
-            AND NOT inactivity_notice AND status IN ('pending', 'processing') LIMIT 1
+            AND NOT inactivity_notice AND NOT support_status_reply AND status IN ('pending', 'processing') LIMIT 1
     """), values)
     if sending is not None:
         return False
+    await connection.execute(text("""
+        UPDATE nexus_atende.support_tickets SET closed_at = clock_timestamp()
+        WHERE tenant_id = :tenant_id AND conversation_id = :id AND closed_at IS NULL
+    """), values)
     await connection.execute(text("""
         UPDATE nexus_atende.conversations
         SET state = 'closed', assigned_user_id = NULL, opening_pending = true,
@@ -61,12 +65,19 @@ class ConversationRepository:
             result = await connection.execute(text(f"""
                 SELECT conversations.id, customers.chat_id, customers.name AS customer_name,
                     conversations.state, conversations.assigned_user_id, conversations.last_interaction,
-                    origins.name AS origin_name, conversations.department
+                    origins.name AS origin_name, conversations.department, ticket.support_ticket
                 FROM nexus_atende.conversations AS conversations
                 JOIN nexus_atende.customers AS customers
                     ON (customers.tenant_id, customers.id) = (conversations.tenant_id, conversations.customer_id)
                 LEFT JOIN nexus_atende.contact_origins AS origins
                     ON (origins.tenant_id, origins.slug) = (conversations.tenant_id, conversations.origin_slug)
+                LEFT JOIN LATERAL (
+                    SELECT jsonb_build_object('id', id, 'product', product, 'details', details, 'closed_at', closed_at)
+                        AS support_ticket
+                    FROM nexus_atende.support_tickets
+                    WHERE tenant_id = conversations.tenant_id AND conversation_id = conversations.id
+                    ORDER BY opened_at DESC, id DESC LIMIT 1
+                ) AS ticket ON true
                 WHERE conversations.tenant_id = :tenant_id AND conversations.state = :state
                     AND (NOT :mine OR conversations.assigned_user_id = :actor_id)
                     AND (conversations.state <> 'waiting' OR {WAITING_SCOPE})
