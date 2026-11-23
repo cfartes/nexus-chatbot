@@ -195,3 +195,5 @@ Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.d
 - A primeira mensagem com uma solicitação segue direto para resposta ou encaminhamento. O bot aproveita o nome quando ele vem em uma apresentação explícita na mesma mensagem.
 
 - O menu SuperAdmins permite que administradores da plataforma convidem novos SuperAdmins e reenviem convites pendentes. O novo usuário define a senha pelo link e seleciona SuperAdmin no login.
+
+- Em Configurações → Base de conhecimento, o administrador pode baixar cada fonte da própria empresa. Novos uploads preservam os bytes originais. Fontes antigas, textos e páginas web fornecem o texto indexado em TXT.

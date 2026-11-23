@@ -182,6 +182,9 @@ export function Settings({ platformAdmin }: { platformAdmin: boolean }) {
         </section> : <p role="status" className="text-sm font-medium">{sources ? `${sources.length} ${sources.length === 1 ? 'fonte cadastrada' : 'fontes cadastradas'}` : 'Consultando fontes…'}</p>}
         <ul className="grid gap-2">{(sources ?? []).map(source => <li className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2" key={source.source}>
           <p className="wrap-anywhere text-sm">{source.source} · {source.chunks} trecho(s)</p>
+          <a className="text-sm font-medium text-nexus-petroleo underline"
+            href={`/api/v1/knowledge/download?source=${encodeURIComponent(source.source)}`}
+            aria-label={`Baixar ${source.source}`}>Baixar</a>
           <Button label="Remover" isDisabled={busy} onClick={() => {
             if (!window.confirm(`Remover a fonte ${source.source}?`)) return;
             void run(async () => {

@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.repositories.database import tenant_transaction
-from src.schemas.knowledge import AssistantProfile, ContactOrigin, KnowledgeMatch, KnowledgeSource, WelcomeMessage
+from src.schemas.knowledge import AssistantProfile, ContactOrigin, KnowledgeFile, KnowledgeMatch, KnowledgeSource, WelcomeMessage
 
 
 class KnowledgeRepository:
@@ -50,7 +50,10 @@ class KnowledgeRepository:
             row = result.mappings().one_or_none()
             return AssistantProfile.model_validate(row) if row is not None else AssistantProfile(message="", company_name="")
 
-    async def replace(self, tenant_id: UUID, source: str, chunks: list[tuple[str, list[float]]], embedding_space: str = "") -> str:
+    async def replace(
+        self, tenant_id: UUID, source: str, chunks: list[tuple[str, list[float]]], embedding_space: str = "",
+        *, original: KnowledgeFile | None = None,
+    ) -> str:
         async with tenant_transaction(self._engine, tenant_id) as connection:
             await connection.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                                      {"key": f"knowledge:{tenant_id}"})
@@ -70,11 +73,27 @@ class KnowledgeRepository:
             """), {"tenant_id": tenant_id, "source": source})
             if chunks:
                 await connection.execute(text("""
-                    INSERT INTO nexus_atende.knowledge_chunks (tenant_id, source, position, content, embedding, embedding_space)
-                    VALUES (:tenant_id, :source, :position, :content, CAST(CAST(:embedding AS text) AS vector), :embedding_space)
+                    INSERT INTO nexus_atende.knowledge_chunks
+                        (tenant_id, source, position, content, embedding, embedding_space, original_kind, original_bytes)
+                    VALUES (:tenant_id, :source, :position, :content, CAST(CAST(:embedding AS text) AS vector),
+                        :embedding_space, :original_kind, :original_bytes)
                 """), [{"tenant_id": tenant_id, "source": source, "position": position, "content": content,
-                         "embedding": str(embedding), "embedding_space": embedding_space} for position, (content, embedding) in enumerate(chunks)])
+                         "embedding": str(embedding), "embedding_space": embedding_space,
+                         "original_kind": original.kind if original and position == 0 else None,
+                         "original_bytes": original.content if original and position == 0 else None,
+                         } for position, (content, embedding) in enumerate(chunks)])
             return source
+
+    async def download(self, tenant_id: UUID, source: str) -> tuple[KnowledgeFile | None, list[str]]:
+        async with tenant_transaction(self._engine, tenant_id) as connection:
+            result = await connection.execute(text("""
+                SELECT content, original_kind, original_bytes FROM nexus_atende.knowledge_chunks
+                WHERE tenant_id = :tenant_id AND source = :source ORDER BY position
+            """), {"tenant_id": tenant_id, "source": source})
+            rows = result.all()
+            if rows and rows[0].original_kind is not None:
+                return KnowledgeFile(kind=rows[0].original_kind, content=rows[0].original_bytes), []
+            return None, [row.content for row in rows]
 
     async def sources(self, tenant_id: UUID) -> list[KnowledgeSource]:
         async with tenant_transaction(self._engine, tenant_id) as connection:

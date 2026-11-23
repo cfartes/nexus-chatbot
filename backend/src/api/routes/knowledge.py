@@ -1,13 +1,15 @@
+from re import IGNORECASE, sub
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from src.api.routes.auth import administrator, administrator_mutation
 from src.schemas.auth import Operator
-from src.schemas.knowledge import ContactOrigin, KnowledgeInput, KnowledgeSource, KnowledgeURL, PreviewRequest, PreviewResult, WelcomeMessage
+from src.schemas.knowledge import ContactOrigin, DocumentFormat, KnowledgeInput, KnowledgeSource, KnowledgeURL, PreviewRequest, PreviewResult, WelcomeMessage
 from src.services.bot import BotService
 from src.services.knowledge import KnowledgeService, KnowledgeUnavailable
-from src.services.knowledge_documents import MAX_UPLOAD, DocumentFormat, DocumentImportError
+from src.services.knowledge_documents import MAX_UPLOAD, DocumentImportError
 
 router = APIRouter(prefix="/knowledge")
 
@@ -68,6 +70,23 @@ async def ingest(content: KnowledgeInput, actor: Writer, service: Service) -> Kn
         raise HTTPException(503, "Serviço de vetorização indisponível") from None
     except ValueError:
         raise HTTPException(422, "Informe uma fonte e o conteúdo") from None
+
+
+@router.get("/download")
+async def download(source: Annotated[str, Query(min_length=1, max_length=200)], actor: Reader, service: Service) -> Response:
+    if "\x00" in source:
+        raise HTTPException(422, "Fonte inválida")
+    document = await service.download(actor.tenant_id, source.strip())
+    if document is None:
+        raise HTTPException(404, "Fonte indisponível")
+    stem = sub(r"\.(txt|md|pdf|docx)$", "", source.strip(), flags=IGNORECASE)
+    stem = sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "_", stem)[:60].strip(" .") or "fonte"
+    filename = quote(f"{stem}.{document.kind}", safe="")
+    return Response(document.content, media_type="application/octet-stream", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 @router.put("/file")

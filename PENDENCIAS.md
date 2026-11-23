@@ -16,3 +16,5 @@
 - Validar na VPS respostas técnicas com documentação pública e os encaminhamentos para as filas da empresa com o e-mail de alerta.
 
 - Validar o primeiro convite real de SuperAdmin pelo Resend na VPS.
+
+- Reimporte os arquivos antigos cujo original precisa ficar disponível para download.

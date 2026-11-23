@@ -6,6 +6,7 @@ from src.schemas.operators import Department
 
 
 OriginSlug = Annotated[str, StringConstraints(max_length=50, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
+DocumentFormat = Literal["txt", "md", "pdf", "docx"]
 
 
 class ContactOrigin(BaseModel):
@@ -21,6 +22,11 @@ class KnowledgeInput(BaseModel):
 class KnowledgeSource(BaseModel):
     source: str
     chunks: int
+
+
+class KnowledgeFile(BaseModel):
+    kind: DocumentFormat
+    content: bytes
 
 
 class WelcomeMessage(BaseModel):

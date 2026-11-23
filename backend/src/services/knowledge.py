@@ -2,13 +2,17 @@ from asyncio import Semaphore, to_thread
 from uuid import UUID
 
 from src.repositories.knowledge import KnowledgeRepository
-from src.schemas.knowledge import ContactOrigin, KnowledgeInput, KnowledgeSource, WelcomeMessage
-from src.services.knowledge_documents import DocumentFormat, DocumentImportError, MAX_DOCUMENT_TEXT, extract_document, extract_url
+from src.schemas.knowledge import ContactOrigin, DocumentFormat, KnowledgeFile, KnowledgeInput, KnowledgeSource, WelcomeMessage
+from src.services.knowledge_documents import DocumentImportError, MAX_DOCUMENT_TEXT, extract_document, extract_url
 from src.services.integrations import IntegrationService
 
 
 class KnowledgeUnavailable(Exception):
     pass
+
+
+CHUNK_OVERLAP = 200
+CHUNK_SIZE = 1800
 
 
 class KnowledgeService:
@@ -37,7 +41,8 @@ class KnowledgeService:
                 raise DocumentImportError(f"O arquivo não contém texto extraível.{hint}")
             if len(document) > MAX_DOCUMENT_TEXT:
                 raise DocumentImportError("O arquivo tem mais de 40.000 caracteres de texto. Divida-o em partes menores.")
-            return await self.ingest(tenant_id, KnowledgeInput(source=source, text=document))
+            return await self.ingest(tenant_id, KnowledgeInput(source=source, text=document),
+                                     original=KnowledgeFile(kind=kind, content=raw))
 
     async def ingest_url(self, tenant_id: UUID, source: str, url: str) -> KnowledgeSource:
         async with self._imports:
@@ -47,7 +52,7 @@ class KnowledgeService:
                 raise KnowledgeUnavailable from None
             return await self.ingest(tenant_id, KnowledgeInput(source=source, text=document))
 
-    async def ingest(self, tenant_id: UUID, content: KnowledgeInput) -> KnowledgeSource:
+    async def ingest(self, tenant_id: UUID, content: KnowledgeInput, *, original: KnowledgeFile | None = None) -> KnowledgeSource:
         client = await self._integrations.ai(tenant_id)
         if client is None:
             raise KnowledgeUnavailable
@@ -55,13 +60,22 @@ class KnowledgeService:
         if not source or not document:
             raise ValueError("Informe uma fonte e o conteúdo")
         # shortcut: split by characters for the pilot, use token-aware chunks for larger imports.
-        chunks = [document[start:start + 1800] for start in range(0, max(1, len(document) - 200), 1600)]
+        chunks = [document[start:start + CHUNK_SIZE]
+                  for start in range(0, max(1, len(document) - CHUNK_OVERLAP), CHUNK_SIZE - CHUNK_OVERLAP)]
         try:
             embeddings = await client.embed_batch(chunks)
         except (OSError, ValueError):
             raise KnowledgeUnavailable from None
-        source = await self._repository.replace(tenant_id, source, list(zip(chunks, embeddings, strict=True)), client.embedding_space)
+        source = await self._repository.replace(tenant_id, source, list(zip(chunks, embeddings, strict=True)),
+                                                client.embedding_space, original=original)
         return KnowledgeSource(source=source, chunks=len(chunks))
+
+    async def download(self, tenant_id: UUID, source: str) -> KnowledgeFile | None:
+        original, chunks = await self._repository.download(tenant_id, source)
+        if original or not chunks:
+            return original
+        document = chunks[0] + "".join(chunk[CHUNK_OVERLAP:] for chunk in chunks[1:])
+        return KnowledgeFile(kind="txt", content=document.encode("utf-8"))
 
     async def sources(self, tenant_id: UUID) -> list[KnowledgeSource]:
         return await self._repository.sources(tenant_id)

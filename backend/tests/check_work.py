@@ -297,7 +297,21 @@ async def check() -> None:
                     status, _, body = await request("PUT", "file", document, admin, prefix="knowledge",
                                                     query=f"kind={kind}&source={kind}".encode())
                     assert status == 200, (kind, status, body)
+                    status, headers, payload = await request("GET", "download", headers=admin,
+                                                             prefix="knowledge", query=f"source={kind}".encode())
+                    assert status == 200 and payload == document
+                    assert dict(headers)[b"content-disposition"].endswith(f"{kind}.{kind}".encode())
                 assert (await call("knowledge", "PUT", "url", {"source": "Web", "url": "https://other.test/"}))[0] == 422
+            assert (await request("GET", "download", headers=operator, prefix="knowledge", query=b"source=pdf"))[0] == 403
+            legacy_text = "a" * 1600 + "b" * 200 + "café"
+            await knowledge_repository.replace(TENANT, "Legado", [
+                (chunk, [1.0] + [0.0] * 767) for chunk in (legacy_text[:1800], legacy_text[1600:])
+            ])
+            status, headers, payload = await request("GET", "download", headers=admin, prefix="knowledge", query=b"source=Legado")
+            assert status == 200 and payload == legacy_text.encode()
+            assert dict(headers)[b"content-disposition"].endswith(b"Legado.txt")
+            await knowledge_repository.replace(TENANT, "Legado", [])
+            assert (await request("GET", "download", headers=admin, prefix="knowledge", query=b"source=Legado"))[0] == 404
             async with tenant_transaction(engine, TENANT) as connection:
                 assert await connection.scalar(text("SELECT content FROM nexus_atende.knowledge_chunks WHERE source = 'md'")) == markdown
             with patch("src.services.openai.request_json") as embeddings:
@@ -482,6 +496,7 @@ async def check() -> None:
             assert pilot_email.call_args.args[2]["to"] == ["support@pilot.test"]
             assert (await request("GET", "", headers=pilot, prefix="clients"))[0] == 403
             assert (await request("GET", "superadmins", headers=pilot, prefix="operators"))[0] == 403
+            assert (await request("GET", "download", headers=pilot, prefix="knowledge", query=b"source=pdf"))[0] == 404
             new_admin = {"name": "Nova Administradora", "email": "platform-next@example.test"}
             assert (await request("POST", "superadmins", json.dumps(new_admin).encode(), pilot, prefix="operators"))[0] == 403
             assert (await request("PUT", "ai", b'{"provider":"openai","model":"test"}', pilot, prefix="integrations"))[0] == 403

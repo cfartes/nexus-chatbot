@@ -3,7 +3,6 @@ from io import BytesIO
 from os import environ
 from subprocess import DEVNULL, PIPE, SubprocessError, TimeoutExpired, run
 from sys import executable, stdin, stdout
-from typing import Literal
 from urllib.parse import urlsplit
 from urllib.request import build_opener
 from xml.etree.ElementTree import ParseError, fromstring
@@ -11,9 +10,9 @@ from zipfile import BadZipFile, ZipFile
 
 from pypdf import Configuration, PdfReader, apply_configuration
 
+from src.schemas.knowledge import DocumentFormat
 from src.services.provider_http import NoRedirect
 
-DocumentFormat = Literal["txt", "md", "pdf", "docx"]
 MAX_UPLOAD = 4 * 1024**2
 MAX_DOCUMENT_TEXT = 40_000
 _PDF_TEXT_LIMIT_EXIT = 42
