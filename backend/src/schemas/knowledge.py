@@ -2,6 +2,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
+from src.schemas.operators import Department
+
 
 OriginSlug = Annotated[str, StringConstraints(max_length=50, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
 
@@ -40,6 +42,7 @@ class PreviewResult(BaseModel):
     sources: list[str]
     reason: str | None = None
     excerpts: list["KnowledgeMatch"] = Field(default_factory=list)
+    department: Department | None = None
 
 
 class KnowledgeMatch(BaseModel):

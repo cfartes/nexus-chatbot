@@ -104,7 +104,7 @@ async def check() -> None:
                 status, preview = await call("knowledge", "POST", "preview", {"question": "Qual é o expediente?"})
             assert status == 200 and json.loads(preview) == {
                 "status": "answered", "message": "Bem-vindo à Nexus!\n\nAtendemos em horário comercial.",
-                "sources": ["Expediente"], "reason": None,
+                "sources": ["Expediente"], "reason": None, "department": None,
                 "excerpts": [{"source": "Expediente", "content": "Atendemos em horário comercial."}],
             }
             clarification = {"choices": [{"message": {"content": json.dumps({
@@ -123,6 +123,18 @@ async def check() -> None:
             assert status == 200 and json.loads(preview)["status"] == "answered"
             assert provider.call_count == 3 and len(json.loads(preview)["excerpts"]) == 6
             await knowledge_repository.replace(TENANT, "Planos", [])
+            with (patch("src.services.technical_web.extract_url", return_value="No Firefox, abra Privacidade e Segurança.") as web,
+                  patch("src.services.openai.request_json", side_effect=[vector, no_answer, completion])):
+                status, preview = await call("knowledge", "POST", "preview", {"question": "Como limpo o cache do Firefox?"})
+                assert status == 200 and json.loads(preview)["status"] == "answered"
+                assert "https://support.mozilla.org/" in json.loads(preview)["message"]
+                assert "Como limpo" not in str(web.call_args)
+            with (patch("src.services.technical_web.extract_url") as web,
+                  patch("src.services.openai.request_json", side_effect=[vector, no_answer])):
+                status, preview = await call("knowledge", "POST", "preview", {"question": "Qual é o preço do plano?"})
+                assert status == 200 and json.loads(preview)["department"] == "comercial"
+                assert "ao Comercial" in json.loads(preview)["message"]
+                web.assert_not_called()
             status, preview = await call("knowledge", "POST", "preview", {"question": "Quero um atendente"})
             assert status == 200 and json.loads(preview)["status"] == "handoff"
             with patch("src.services.openai.request_json", side_effect=[vector, completion]):

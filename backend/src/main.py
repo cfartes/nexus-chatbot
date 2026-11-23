@@ -61,7 +61,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.conversation_events = ConversationEvents(EventRepository(engine))
         knowledge = KnowledgeRepository(engine)
         application.state.knowledge_service = KnowledgeService(knowledge, integrations, settings.knowledge_url_origin)
-        application.state.bot_service = BotService(BotRepository(engine), knowledge, integrations)
+        application.state.bot_service = BotService(BotRepository(engine), knowledge, integrations, settings.technical_web_sources)
         application.state.openwa_webhook = (
             OpenWAWebhook(IncomingMessageRepository(engine), *webhook_credentials, integrations)
             if webhook_credentials else None

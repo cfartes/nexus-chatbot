@@ -189,3 +189,5 @@ Ao reexecutar, o instalador preserva o banco e as credenciais, faz backup em `.d
 - A IA combina busca semântica e textual em português, usa o contexto recente em perguntas curtas, amplia a busca antes do encaminhamento e pode pedir esclarecimento. O teste no painel exibe trechos e o motivo da decisão.
 
 - O administrador pode configurar o nome do assistente em Configurações → Assistente e boas-vindas. A IA usa a identidade da empresa ativa no WhatsApp e no teste do painel.
+
+- Se a base não sustentar uma resposta técnica simples, o bot consulta documentação oficial de cache para Chrome e Firefox e pode consultar até três páginas HTTPS autorizadas por empresa. Configure `NEXUS_ATENDE_TECHNICAL_WEB_SOURCES` em `.env.production` como JSON, por exemplo `{"00000000-0000-0000-0000-000000000001":["https://docs.example.com/ajuda"]}`. Cadastre apenas páginas públicas de documentação oficial. O bot cita as fontes consultadas. Dúvidas sem resposta seguem para a fila do setor identificado, com alerta ao e-mail cadastrado pela empresa.

@@ -3,14 +3,17 @@ from re import IGNORECASE, fullmatch, search, sub
 from unicodedata import normalize
 from uuid import UUID
 
+from pydantic import HttpUrl
+
 from src.repositories.bot import BotRepository
 from src.repositories.knowledge import KnowledgeRepository
 from src.schemas.knowledge import BotContext, OpeningUpdate, PreviewResult
 from src.schemas.operators import Department
 from src.schemas.work import WorkItem
 from src.services.integrations import IntegrationService
+from src.services.openai import OpenAIClient
+from src.services.technical_web import technical_excerpts
 
-FALLBACK = "Vou encaminhar sua conversa para nossa equipe. Um atendente continuará o atendimento aqui."
 TECHNICAL = "Estou com uma dificuldade técnica no momento. Vou chamar nossa equipe para continuar o atendimento."
 ASK_NAME = "Como posso chamar você?"
 ASK_SUBJECT = "Como posso ajudar?"
@@ -20,14 +23,28 @@ DEPARTMENTS: tuple[tuple[Department, str], ...] = (
 DEPARTMENT_MENU = "Qual é o assunto do atendimento? Responda com o número da opção:\n\n" + "\n".join(
     f"{number}. {label}" for number, (_, label) in enumerate(DEPARTMENTS, 1)
 )
+TOPICS: tuple[tuple[Department, str], ...] = (
+    ("financeiro", r"financeiro|boleto|cobranca|fatura|nota fiscal|pagamento|reembolso|segunda via"),
+    ("comercial", r"comercial|preco|valor|quanto (?:custa|fica)|orcamento|proposta|contrata\w*|planos?|desconto|demonstracao"),
+    ("sac", r"sac|reclam\w*|insatisfa\w*|ouvidoria|sugestao"),
+    ("suporte", r"suporte|tecnic\w*|erro|falha|trav\w*|cache|cookies?|navegador|login|configur\w*|instal\w*"),
+)
+HANDOFF_MESSAGES: dict[Department, str] = {
+    "comercial": "Vou encaminhar sua conversa ao Comercial para que a equipe possa confirmar os detalhes com você por aqui.",
+    "financeiro": "Vou encaminhar sua conversa ao Financeiro para que a equipe possa verificar isso com você por aqui.",
+    "suporte": "Vou chamar a equipe de Suporte para analisar o que está acontecendo e continuar o atendimento por aqui.",
+    "sac": "Vou encaminhar sua conversa ao SAC para que a equipe possa dar continuidade ao seu atendimento por aqui.",
+}
 logger = logging.getLogger(__name__)
 
 
 class BotService:
-    def __init__(self, repository: BotRepository, knowledge: KnowledgeRepository, integrations: IntegrationService) -> None:
+    def __init__(self, repository: BotRepository, knowledge: KnowledgeRepository, integrations: IntegrationService,
+                 web_sources: dict[UUID, list[HttpUrl]] | None = None) -> None:
         self._repository = repository
         self._knowledge = knowledge
         self._integrations = integrations
+        self._web_sources = web_sources or {}
 
     async def process(self, tenant_id: UUID, work: WorkItem) -> None:
         context = await self._repository.context(tenant_id, work)
@@ -60,19 +77,16 @@ class BotService:
         elif context.opening_question is not None:
             if _human_requested(question):
                 opening = OpeningUpdate(origin_slug=context.origin_slug)
-                await self._repository.resolve(tenant_id, work, DEPARTMENT_MENU, TECHNICAL, None,
-                                               opening, ask_department=True)
-                return
-            name = _customer_name(question)
-            if name is None:
+            elif (name := _customer_name(question)) is None:
                 if not context.opening_question and not _generic(question):
                     opening = OpeningUpdate(origin_slug=context.origin_slug, pending_question=question)
                 await self._repository.resolve(tenant_id, work, ASK_NAME, TECHNICAL, None, opening)
                 return
-            context.name = name
-            opening = OpeningUpdate(origin_slug=context.origin_slug, customer_name=name)
-            prefix = f"Prazer, {name}!"
-            question = context.opening_question
+            else:
+                context.name = name
+                opening = OpeningUpdate(origin_slug=context.origin_slug, customer_name=name)
+                prefix = f"Prazer, {name}!"
+                question = context.opening_question
 
         if context.awaiting_department:
             choice = fullmatch(r"([1-4])[.)]?", question)
@@ -83,10 +97,6 @@ class BotService:
             else:
                 await self._repository.resolve(tenant_id, work, DEPARTMENT_MENU, TECHNICAL, None, opening)
             return
-        if _human_requested(question):
-            await self._repository.resolve(tenant_id, work, _prefixed(prefix, DEPARTMENT_MENU), TECHNICAL, None,
-                                           opening, ask_department=True)
-            return
         if not question or (not context.recent and _generic(question)):
             await self._repository.resolve(tenant_id, work, _prefixed(prefix, ASK_SUBJECT), TECHNICAL, None, opening)
             return
@@ -94,8 +104,14 @@ class BotService:
         context.welcome_message = ""
         result, summary = await self._answer(tenant_id, context)
         answer = _prefixed(prefix, result.message) if result.status in {"answered", "clarify"} else None
-        fallback = TECHNICAL if result.status == "unavailable" else result.message
-        await self._repository.resolve(tenant_id, work, answer, _prefixed(prefix, fallback), summary, opening)
+        fallback = result.message
+        if result.status == "unavailable":
+            fallback = HANDOFF_MESSAGES[result.department] if result.department else TECHNICAL
+        ask_department = result.status == "handoff" and result.department is None
+        if ask_department:
+            answer = _prefixed(prefix, result.message)
+        await self._repository.resolve(tenant_id, work, answer, _prefixed(prefix, fallback), summary, opening,
+                                       ask_department=ask_department, department=result.department)
 
     async def preview(self, tenant_id: UUID, question: str) -> PreviewResult:
         profile = await self._knowledge.welcome(tenant_id)
@@ -109,18 +125,24 @@ class BotService:
 
     async def _answer(self, tenant_id: UUID, context: BotContext) -> tuple[PreviewResult, str | None]:
         welcome = f"{context.welcome_message}\n\n" if not context.recent and context.welcome_message else ""
-        fallback = welcome + FALLBACK
+        department = _department(context)
+        handoff_message = welcome + (HANDOFF_MESSAGES[department] if department else DEPARTMENT_MENU)
         if _human_requested(context.question):
-            return PreviewResult(status="handoff", message=welcome + DEPARTMENT_MENU, sources=[],
+            return PreviewResult(status="handoff", message=handoff_message, sources=[], department=department,
                                  reason="O cliente pediu atendimento humano."), None
         client = await self._integrations.ai(tenant_id)
         if client is None:
-            return PreviewResult(status="unavailable", message="A IA está indisponível. Confira o provedor e as credenciais.", sources=[]), None
+            return PreviewResult(status="unavailable", message="A IA está indisponível. Confira o provedor e as credenciais.",
+                                 sources=[], department=department), None
         outdated, indexed = await self._knowledge.index_ready(tenant_id, client.embedding_space)
         reindex = "Reimporte as fontes para indexá-las com o provedor de embeddings atual."
         if not indexed:
+            if not outdated and department == "suporte":
+                web_result = await self._web_answer(tenant_id, client, context, welcome)
+                if web_result:
+                    return web_result, None
             message = reindex if outdated else "Adicione fontes à base de conhecimento antes de testar a IA."
-            return PreviewResult(status="unavailable", message=message, sources=[]), None
+            return PreviewResult(status="unavailable", message=message, sources=[], department=department), None
         summary = None
         if context.previous:
             try:
@@ -151,13 +173,19 @@ class BotService:
                     sources = list(dict.fromkeys(match.source for match in knowledge))
                     result = await client.answer(context, [match.content for match in knowledge], recap)
         except (OSError, ValueError):
-            return PreviewResult(status="unavailable", message="Não foi possível concluir a consulta. Confira a chave, o modelo e os limites do provedor.", sources=sources), summary
+            return PreviewResult(status="unavailable", message="Não foi possível concluir a consulta. Confira a chave, o modelo e os limites do provedor.",
+                                 sources=sources, department=department), summary
         answer = result.answer.strip()
         excerpts = knowledge
         if result.needs_human:
+            if department == "suporte":
+                web_result = await self._web_answer(tenant_id, client, context, welcome)
+                if web_result:
+                    return web_result, summary
             if outdated:
-                return PreviewResult(status="unavailable", message=reindex, sources=sources, excerpts=excerpts), summary
-            return PreviewResult(status="handoff", message=fallback, sources=sources, excerpts=excerpts,
+                return PreviewResult(status="unavailable", message=reindex, sources=sources, excerpts=excerpts,
+                                     department=department), summary
+            return PreviewResult(status="handoff", message=handoff_message, sources=sources, excerpts=excerpts, department=department,
                                  reason="Os trechos consultados não sustentaram uma resposta."), summary
         if not 0 < len(answer) <= 4096 or "\x00" in answer:
             return PreviewResult(status="unavailable", message="O modelo não retornou uma resposta utilizável. Confira o modelo configurado.", sources=sources), summary
@@ -166,9 +194,36 @@ class BotService:
                                  reason="Falta um detalhe que o cliente pode esclarecer."), summary
         return PreviewResult(status="answered", message=(welcome + answer)[:4096], sources=sources, excerpts=excerpts), summary
 
+    async def _web_answer(self, tenant_id: UUID, client: OpenAIClient, context: BotContext, welcome: str) -> PreviewResult | None:
+        excerpts = await technical_excerpts(_normalized(context.question), self._web_sources.get(tenant_id, []))
+        if not excerpts:
+            return None
+        try:
+            result = await client.answer(context, [match.content for match in excerpts], None, web=True)
+        except (OSError, ValueError):
+            return None
+        answer = result.answer.strip()
+        if result.needs_human or result.needs_clarification or not answer or "\x00" in answer or search(r"https?://|www\.", answer, IGNORECASE):
+            return None
+        sources = [match.source for match in excerpts]
+        citations = "\n\nFontes consultadas:\n" + "\n".join(sources)
+        return PreviewResult(status="answered", message=(welcome + answer)[:max(0, 4096 - len(citations))] + citations,
+                             sources=sources, excerpts=excerpts, reason="Consulta a documentação pública autorizada.")
+
 
 def _normalized(value: str) -> str:
     return normalize("NFKD", value.casefold()).encode("ascii", "ignore").decode()
+
+
+def _department(context: BotContext) -> Department | None:
+    latest = [context.question, *(line.removeprefix("customer: ") for line in reversed(context.recent)
+                                   if line.startswith("customer: "))]
+    for line in latest:
+        matches = [department for department, words in TOPICS if search(rf"\b(?:{words})\b", _normalized(line))]
+        business = [department for department in matches if department != "suporte"]
+        if matches:
+            return business[0] if len(business) == 1 else matches[0] if len(matches) == 1 else None
+    return None
 
 
 def _human_requested(value: str) -> bool:

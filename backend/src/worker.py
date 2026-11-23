@@ -36,7 +36,8 @@ class Worker:
         self._outgoing = OutgoingMessageRepository(engine)
         self._conversations = ConversationRepository(engine)
         self._next_inactivity = 0.0
-        self._bot = BotService(BotRepository(engine), KnowledgeRepository(engine), self._integrations)
+        self._bot = BotService(BotRepository(engine), KnowledgeRepository(engine), self._integrations,
+                               settings.technical_web_sources)
 
     async def sync_webhook(self) -> int:
         tenant_id = self._tenant_id

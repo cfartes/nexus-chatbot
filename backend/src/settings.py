@@ -1,7 +1,7 @@
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import SecretStr
+from pydantic import Field, HttpUrl, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     config_key: SecretStr | None = None
     ollama_url: str | None = None
     knowledge_url_origin: str | None = None
+    technical_web_sources: dict[UUID, list[HttpUrl]] = Field(default_factory=dict)
 
     def webhook_credentials(self) -> tuple[UUID, SecretStr] | None:
         tenant_id, secret = self.openwa_webhook_tenant_id, self.openwa_webhook_secret

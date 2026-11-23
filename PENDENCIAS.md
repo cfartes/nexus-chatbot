@@ -12,3 +12,5 @@
 - Medir no piloto os encaminhamentos evitáveis e a qualidade das respostas com perguntas reais anonimizadas e o provedor de produção.
 
 - Validar na VPS a apresentação de dois assistentes com nomes diferentes em sessões WhatsApp de empresas distintas.
+
+- Validar na VPS respostas técnicas com documentação pública e os encaminhamentos para as filas da empresa com o e-mail de alerta.

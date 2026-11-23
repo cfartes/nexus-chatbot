@@ -69,14 +69,14 @@ class _PageText(HTMLParser):
             self.parts.append(data.strip())
 
 
-def extract_url(url: str, allowed_origin: str | None) -> str:
+def extract_url(url: str, allowed_origin: str | None, *, timeout: int = 10, max_bytes: int = 1_000_000) -> str:
     parsed = urlsplit(url)
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
             or parsed.fragment or f"{parsed.scheme}://{parsed.netloc}" != allowed_origin):
         raise ValueError("URL fora da origem HTTPS autorizada")
-    with build_opener(NoRedirect()).open(url, timeout=10) as response:
-        body: bytes = response.read(1_000_001)
-        if len(body) > 1_000_000 or response.headers.get_content_type() not in {"text/html", "text/plain"}:
+    with build_opener(NoRedirect()).open(url, timeout=timeout) as response:
+        body: bytes = response.read(max_bytes + 1)
+        if len(body) > max_bytes or response.headers.get_content_type() not in {"text/html", "text/plain"}:
             raise ValueError("Formato ou tamanho de página inválido")
         content = body.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
         if response.headers.get_content_type() == "text/plain":
